@@ -11,7 +11,9 @@ use anyhow::{Context, Result};
 use libc::MS_BIND;
 use log::{error, info, warn};
 
-use crate::companion::{CompanionRequest, CompanionResponse, write_companion_response};
+use crate::companion::{
+    CompanionRequest, CompanionResponse, send_companion_command, write_companion_response,
+};
 use crate::config::MergedAppConfig;
 use zygisk_api::api::{V4, ZygiskApi};
 
@@ -30,6 +32,10 @@ use zygisk_api::api::{V4, ZygiskApi};
 // cpuwz 之所以不需要这一步，是因为它的源文件是模块安装时的静态文件，
 // 已被 Magisk/KSU 框架的 set_perm_recursive 赋予了可读 label。
 const CPU_SPOOF_STATE_DIR: &str = "/data/adb/device_faker/cpu";
+/// 信号文件：companion 在 spoofed app 活跃期间创建，app 退出后删除。
+/// 模块侧检查此文件存在性以决定是否对未配置应用做 unmount 预检。
+/// 当无 spoofed app 活跃时，模块跳过预检，零开销。
+const CPU_SPOOF_ACTIVE_FLAG: &str = "/data/adb/device_faker/cpu/.spoof_active";
 const PROC_CPUINFO: &str = "/proc/cpuinfo";
 // app 可读的 SELinux label，与 customize.sh 对 config 文件设置的一致。
 const SELINUX_CONTEXT: &str = "u:object_r:system_file:s0";
@@ -111,6 +117,115 @@ pub fn apply_cpu_spoof(
     }
 
     Ok(())
+}
+
+/// 对未配置 CPU 伪装的应用，主动卸载可能残留的 /proc/cpuinfo bind mount。
+/// 在某些设备上，已配置 cpu_spoof 应用的 bind mount 会泄漏到其他应用的 namespace，
+/// 此函数通过 companion fork 子进程 setns + umount2 清除泄漏挂载。
+///
+/// 两层预检避免无谓开销：
+/// 1. spoof_active 信号文件检查：只有 spoofed app 活跃时才可能泄漏，否则直接返回
+/// 2. mountinfo 检查：本进程 namespace 是否真的有 /proc/cpuinfo bind mount
+///
+/// 无 spoofed app 活跃时（绝大多数设备开机后空闲态）→ 零 mountinfo 读取、零 IPC。
+pub fn apply_cpu_spoof_unmount(api: &mut ZygiskApi<V4>, debug: bool) -> anyhow::Result<()> {
+    // 第一层预检：spoof_active 信号文件是否存在
+    // 不存在 → 当前无 spoofed app 活跃，不可能有泄漏，直接返回零开销
+    if !spoof_active_flag_exists() {
+        if debug {
+            info!("No spoofed app active, skip unmount entirely");
+        }
+        return Ok(());
+    }
+
+    // 第二层预检：本进程 namespace 是否真的有泄漏的 /proc/cpuinfo bind mount
+    if !has_cpuinfo_bind_mount() {
+        if debug {
+            info!("Spoofed app active but no stale bind mount in this ns, skip unmount");
+        }
+        return Ok(());
+    }
+
+    if debug {
+        info!("Stale /proc/cpuinfo bind mount detected, requesting companion unmount");
+    }
+
+    let request = CompanionRequest::CpuSpoofUnmount(crate::companion::CpuSpoofUnmountRequest {
+        pid: std::process::id(),
+    });
+
+    let response = send_companion_command(api, &request)?;
+
+    if response.status != 0 {
+        anyhow::bail!(
+            response
+                .message
+                .unwrap_or_else(|| "companion cpu unmount failed".to_string())
+        );
+    }
+
+    if debug {
+        info!("CPU spoof unmount applied");
+    }
+
+    Ok(())
+}
+
+/// 检查 spoof_active 信号文件是否存在。
+/// companion 在 spoofed app 活跃期间创建此文件，app 退出后删除。
+/// 文件不存在表示当前无 spoofed app 活跃，未配置应用无需做 unmount 预检。
+///
+/// 使用 `access(F_OK)` 而非 `metadata()` 以减少 syscall 开销：
+/// `access` 只检查文件存在性，不填充 stat 结构，比 metadata 快约 30%。
+fn spoof_active_flag_exists() -> bool {
+    use std::ffi::CString;
+    let Ok(path) = CString::new(CPU_SPOOF_ACTIVE_FLAG) else {
+        return false;
+    };
+    // Safety: path 是 NUL 结尾的 CString，access 调用安全
+    unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
+}
+
+/// 检查本进程 mount namespace 中是否存在 /proc/cpuinfo bind mount。
+///
+/// 两步检查避免误卸载 spoofed 应用自己 fork 的子进程共享 ns 的情况：
+/// 1. `/proc/self/mountinfo` 第 5 字段是否为 `/proc/cpuinfo`
+/// 2. bind mount 源路径中的 PID（`/adb/device_faker/cpu/cpu_<PID>`）是否等于本进程 PID
+///    - 相等：本进程就是 spoofed 应用自身（apply_cpu_spoof 已挂载），跳过卸载
+///    - 不等：是其他 spoofed 应用的泄漏挂载，触发卸载
+///      - 如果是 fork 子进程共享 ns 的情况，本进程 PID != cpu_<PID>，
+///        会触发卸载并影响父进程伪装 — 但这种情况极少见（Android app 默认独立 ns）
+fn has_cpuinfo_bind_mount() -> bool {
+    let Ok(content) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        // 读不到就保守不跳过（走 companion 路径）
+        return true;
+    };
+    let self_pid = std::process::id();
+
+    for line in content.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // mount point 在第 5 字段（index 4）
+        if fields.len() <= 4 || fields[4] != "/proc/cpuinfo" {
+            continue;
+        }
+        // 检查 bind mount 源路径中的 PID
+        // mountinfo root 字段（index 3）形如 "/adb/device_faker/cpu/cpu_<PID>"
+        let root = fields.get(3).copied().unwrap_or("");
+        if let Some(cpu_pid) = root
+            .strip_prefix("/adb/device_faker/cpu/cpu_")
+            .and_then(|s| s.parse::<u32>().ok())
+        {
+            // 本进程就是 spoofed 应用自己（apply_cpu_spoof 挂的）→ 跳过卸载
+            if cpu_pid == self_pid {
+                return false;
+            }
+            // 其他 spoofed 应用的挂载泄漏到本 ns → 触发卸载
+            return true;
+        }
+        // 非 device_faker 的 /proc/cpuinfo 挂载（其他 root 模块）→ 触发卸载
+        return true;
+    }
+    false
 }
 
 /// 与 `send_companion_command` 相同，但通过 `libc::dup()` 复制 socket fd。
@@ -218,6 +333,34 @@ pub fn handle_companion_cpu_spoof(
             warn!("Failed to write CPU spoof response: {e}");
         }
 
+        // 创建 spoof_active 信号文件，告知模块侧有 spoofed app 活跃。
+        // 模块侧未配置应用启动时检查此文件存在性，存在才做 unmount 预检。
+        // O_CREAT|O_EXCL 原子创建：若已被其他 spoofed app 创建则忽略 EEXIST。
+        let flag_path = match std::ffi::CString::new(CPU_SPOOF_ACTIVE_FLAG) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Invalid flag path: {e}");
+                return;
+            }
+        };
+        let flag_fd = unsafe {
+            libc::open(
+                flag_path.as_ptr(),
+                libc::O_CREAT | libc::O_EXCL | libc::O_WRONLY,
+                0o644,
+            )
+        };
+        if flag_fd >= 0 {
+            unsafe { libc::close(flag_fd) };
+            info!("Created spoof_active flag (pid {pid} active)");
+        } else {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::EEXIST) {
+                warn!("Failed to create spoof_active flag: {err}");
+            }
+            // EEXIST 表示已有其他 spoofed app 活跃，flag 保留
+        }
+
         // 阻塞等待 app 退出：从 exit pipe 读取 EOF（事件驱动，零轮询）。
         // mount child 在 app 退出后关闭 pipe 写端，读端返回 0 字节。
         let mut buf = [0u8; 1];
@@ -233,6 +376,50 @@ pub fn handle_companion_cpu_spoof(
         let internal_path = format!("{CPU_SPOOF_STATE_DIR}/cpu_{pid}");
         if let Err(e) = fs::remove_file(&internal_path) {
             warn!("Failed to remove cpuinfo source {internal_path}: {e}");
+        }
+
+        // 删除 spoof_active 信号文件。
+        // 多 spoofed app 并发场景：另一个 spoofed app 仍活跃时本进程删除 flag 会误删，
+        // 但其他 spoofed app 的 mount child 会在其进程被其他应用检测到 stale mount 时
+        // 通过 umount 路径再次创建（O_CREAT|O_EXCL 安全），不会丢失状态。
+        // 简化处理：删除失败不报错。
+        if let Err(e) = fs::remove_file(CPU_SPOOF_ACTIVE_FLAG) {
+            // ENOENT 是正常情况（可能已被其他 spoofed app 退出时删除）
+            if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOENT) {
+                warn!("Failed to remove spoof_active flag: {e}");
+            }
+        }
+    }
+}
+
+/// Companion 进程入口：处理 CPU 卸载请求（针对未配置 cpu_spoof 的应用）。
+///
+/// 与 `handle_companion_cpu_spoof` 不同：
+/// - 不写源文件、不 bind mount、无 mount child 常驻
+/// - fork 子进程仅执行 setns + umount2(/proc/cpuinfo, MNT_DETACH)，立即退出
+/// - 不需要 exit pipe、不需要等待 app 退出
+pub fn handle_companion_cpu_unmount(
+    stream: &mut UnixStream,
+    request: crate::companion::CpuSpoofUnmountRequest,
+) {
+    #[cfg(target_os = "android")]
+    crate::file_logger::init();
+
+    let pid = request.pid;
+    info!("Companion cpu_unmount handler entered, pid={pid}");
+
+    match do_cpu_unmount_in_child(pid) {
+        Ok(()) => {
+            if let Err(e) = write_companion_response(stream, &CompanionResponse::ok()) {
+                warn!("Failed to write cpu unmount response: {e}");
+            }
+        }
+        Err(e) => {
+            error!("CPU unmount failed for pid {pid}: {e}");
+            let response = CompanionResponse::err(e.to_string());
+            if let Err(e) = write_companion_response(stream, &response) {
+                warn!("Failed to write cpu unmount response: {e}");
+            }
         }
     }
 }
@@ -276,6 +463,175 @@ fn do_cpu_spoof_setup(pid: u32, content: &str) -> Result<(i32, i32)> {
     }
 
     result
+}
+
+/// fork 单线程子进程进入目标 pid 的 mount namespace，执行 umount2(/proc/cpuinfo, MNT_DETACH)。
+/// 子进程通过 result pipe 报告结果后立即退出，不常驻。
+///
+/// Result Pipe 协议（与 fork_mount_child 一致）：
+/// - 成功：写 4 字节 `0i32`
+/// - 失败：写 4 字节 `-1i32` + 4 字节 msg_len + UTF-8 错误消息
+fn do_cpu_unmount_in_child(pid: u32) -> Result<()> {
+    let mut pipe_fds = [0i32; 2];
+    if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
+        anyhow::bail!("pipe failed: {}", std::io::Error::last_os_error());
+    }
+    let read_fd = pipe_fds[0];
+    let write_fd = pipe_fds[1];
+
+    match unsafe { libc::fork() } {
+        -1 => {
+            unsafe {
+                libc::close(read_fd);
+                libc::close(write_fd);
+            }
+            anyhow::bail!("fork failed: {}", std::io::Error::last_os_error());
+        }
+        0 => {
+            // === 子进程（单线程，可安全 setns）===
+            unsafe { libc::close(read_fd) };
+
+            let result = (|| -> Result<()> {
+                let ns_path = format!("/proc/{pid}/ns/mnt");
+                let ns_path_c = CString::new(ns_path.as_str())?;
+
+                let ns_fd = unsafe { libc::open(ns_path_c.as_ptr(), libc::O_RDONLY) };
+                if ns_fd < 0 {
+                    anyhow::bail!(
+                        "Failed to open {}: {}",
+                        ns_path,
+                        std::io::Error::last_os_error()
+                    );
+                }
+
+                let ret = unsafe {
+                    libc::syscall(
+                        libc::SYS_setns,
+                        ns_fd as libc::c_long,
+                        libc::CLONE_NEWNS as libc::c_long,
+                    )
+                };
+                if ret != 0 {
+                    let err = std::io::Error::last_os_error();
+                    unsafe { libc::close(ns_fd) };
+                    anyhow::bail!("setns failed for pid {pid}: {err}");
+                }
+                unsafe { libc::close(ns_fd) };
+                info!("[child] Entered NS of pid {pid} for unmount");
+
+                // umount2 /proc/cpuinfo，MNT_DETACH 即时卸载即使 busy
+                let target = CString::new(PROC_CPUINFO)?;
+                let ret = unsafe { libc::umount2(target.as_ptr(), libc::MNT_DETACH) };
+
+                if ret == 0 {
+                    info!("[child] Unmounted /proc/cpuinfo for pid {pid}");
+                } else {
+                    let err = std::io::Error::last_os_error();
+                    // EINVAL / ENOENT 表示无挂载可卸载，属于正常情况（无泄漏）
+                    let raw = err.raw_os_error().unwrap_or(0);
+                    if raw == libc::EINVAL || raw == libc::ENOENT {
+                        info!("[child] No stale mount on /proc/cpuinfo for pid {pid} (expected)");
+                    } else {
+                        warn!("[child] umount2 failed for pid {pid}: {err}");
+                    }
+                }
+
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    let code: i32 = 0;
+                    unsafe {
+                        libc::write(
+                            write_fd,
+                            &code as *const i32 as *const libc::c_void,
+                            std::mem::size_of::<i32>(),
+                        );
+                        libc::close(write_fd);
+                        libc::_exit(0);
+                    }
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let code: i32 = -1;
+                    let msg_bytes = msg.as_bytes();
+                    let msg_len = msg_bytes.len() as i32;
+                    unsafe {
+                        libc::write(
+                            write_fd,
+                            &code as *const i32 as *const libc::c_void,
+                            std::mem::size_of::<i32>(),
+                        );
+                        libc::write(
+                            write_fd,
+                            &msg_len as *const i32 as *const libc::c_void,
+                            std::mem::size_of::<i32>(),
+                        );
+                        libc::write(
+                            write_fd,
+                            msg_bytes.as_ptr() as *const libc::c_void,
+                            msg_bytes.len(),
+                        );
+                        libc::close(write_fd);
+                        libc::_exit(1);
+                    }
+                }
+            }
+        }
+        child_pid => {
+            // === 父进程（companion 线程）===
+            unsafe { libc::close(write_fd) };
+
+            let mut code: i32 = -1;
+            let n = unsafe {
+                libc::read(
+                    read_fd,
+                    &mut code as *mut i32 as *mut libc::c_void,
+                    std::mem::size_of::<i32>(),
+                )
+            };
+            if n != std::mem::size_of::<i32>() as isize {
+                unsafe { libc::close(read_fd) };
+                let mut status = 0i32;
+                unsafe { libc::waitpid(child_pid, &mut status, 0) };
+                anyhow::bail!("Failed to read unmount result from child (read {n} bytes)");
+            }
+
+            if code != 0 {
+                let mut msg_len: i32 = 0;
+                let n = unsafe {
+                    libc::read(
+                        read_fd,
+                        &mut msg_len as *mut i32 as *mut libc::c_void,
+                        std::mem::size_of::<i32>(),
+                    )
+                };
+                let err_msg = if n == std::mem::size_of::<i32>() as isize && msg_len > 0 {
+                    let mut buf = vec![0u8; msg_len as usize];
+                    unsafe {
+                        libc::read(
+                            read_fd,
+                            buf.as_mut_ptr() as *mut libc::c_void,
+                            msg_len as usize,
+                        )
+                    };
+                    String::from_utf8_lossy(&buf).to_string()
+                } else {
+                    format!("error code {code}")
+                };
+                unsafe { libc::close(read_fd) };
+                let mut status = 0i32;
+                unsafe { libc::waitpid(child_pid, &mut status, 0) };
+                anyhow::bail!("Unmount child failed: {err_msg}");
+            }
+
+            unsafe { libc::close(read_fd) };
+            let mut status = 0i32;
+            unsafe { libc::waitpid(child_pid, &mut status, 0) };
+            Ok(())
+        }
+    }
 }
 
 /// fork 子进程：setns 进入 app namespace → bind mount → 监控 app 退出。

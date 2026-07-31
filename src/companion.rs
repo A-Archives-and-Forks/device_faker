@@ -43,6 +43,11 @@ pub struct CpuSpoofRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct CpuSpoofUnmountRequest {
+    pub pid: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WriteLogRequest {
     pub lines: Vec<String>,
 }
@@ -148,6 +153,9 @@ pub fn handle_companion_request(stream: &mut UnixStream) {
         }
         CompanionRequest::CpuSpoof(request) => {
             crate::cpu_spoof::handle_companion_cpu_spoof(stream, request);
+        }
+        CompanionRequest::CpuSpoofUnmount(request) => {
+            crate::cpu_spoof::handle_companion_cpu_unmount(stream, request);
         }
         CompanionRequest::WriteLog(request) => {
             let response = match write_log_lines(request) {
@@ -744,6 +752,7 @@ pub enum CompanionRequest {
     Apply(ResetpropSessionRequest),
     Restore(RestoreRequest),
     CpuSpoof(CpuSpoofRequest),
+    CpuSpoofUnmount(CpuSpoofUnmountRequest),
     WriteLog(WriteLogRequest),
 }
 

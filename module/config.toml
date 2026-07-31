@@ -110,7 +110,7 @@ Hardware        : HiSilicon Kirin 9030 Pro"""
 # ============================================================
 # 定义常用机型模板，可以直接在模板中指定包名列表
 
-[templates.redmagic_9_pro]
+[templates.redmagic_11_pro]
 packages = [
     "com.mobilelegends.mi",
     "com.supercell.brawlstars",
@@ -118,13 +118,13 @@ packages = [
     "com.netease.newspike",
     "com.activision.callofduty.warzone",
 ]
-manufacturer = "ZTE"
-brand = "nubia"
-model = "NX769J"
-device = "REDMAGIC 9 Pro"
-product = "NX769J"
-fingerprint = "nubia/NX769J/NX769J:14/UKQ1.230917.001/20240813.173312:user/release-keys"
-build_id = "UKQ1.230917.001"
+manufacturer = "Nubia"
+brand = "REDMAGIC"
+model = "NX809J"
+device = "REDMAGIC 11 PRO"
+product = "NX809J"
+fingerprint = "REDMAGIC/NX809J-UN/NX809J:16/BP2A.250605.031.A3/20251017.000000:user/release-keys"
+build_id = "BP2A.250605.031.A3"
 
 [templates]
 [templates."一加15"]
