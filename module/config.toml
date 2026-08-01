@@ -5,15 +5,11 @@
 # 全局配置
 # ============================================================
 
-# 全局默认模式 — 通常不需要设置，见下方说明
+# 全局设置
 #
-# 新架构（按需调度）下，所有应用自动走 JNI + COW + DlClose 流程，
-# 用户无需选择模式。只有当 COW 在某设备不兼容时，才需要降级：
-#
-# - "full": 降级到旧 PLT hook 模式（模块驻留内存，可能被检测）
-#
-# 取消注释下一行即可启用降级（不推荐，会降低隐蔽性）：
-# default_mode = "full"
+# debug = true 可开启详细日志（默认关闭，隐蔽性更好）
+# default_force_denylist_unmount = true 可全局启用 FORCE_DENYLIST_UNMOUNT
+# default_cpu_spoof = "kirin_9030pro" 可设置全局默认 CPU 伪装预设
 
 # CPU 伪装预设表
 # 在模板或 [[apps]] 中使用 cpu_spoof = "预设名称" 引用
@@ -101,7 +97,7 @@ CPU revision    : 0
 Hardware        : HiSilicon Kirin 9030 Pro"""
 
 # 调试模式（默认关闭以提高隐蔽性）
-# 设置为 true 可以在 logcat 中看到详细日志，方便排查问题
+# 设置为 true 后详细日志写入 /data/adb/device_faker/logs/device_faker.log
 # 正常使用时建议设置为 false 或删除此行
 # debug = false
 
@@ -254,11 +250,12 @@ manufacturer = "vivo"
 # 【架构】按需调度（无需选择模式）
 #
 # 所有应用自动走统一执行流：
-#   ① hook_build_fields (JNI)         — 始终执行（如有设备字段）
-#   ② cow_props::apply_cow_spoof (COW) — 始终执行（如有 prop_map）
-#   ③ companion CPU spoof              — 按需（仅 cpu_spoof 配置时）
-#   ④ companion resetprop              — 按需（仅 __DELETE__ 属性时）
-#   ⑤ DlClose                          — 始终执行（零模块驻留）
+#   ① Build 字段覆写 (JNI)      — 始终执行（如有设备字段）
+#   ② 属性伪装                   — companion_resetprop = true 时全部走
+#                                  companion resetprop；否则 COW 优先，
+#                                  COW 未找到的属性与 __DELETE__ 走 companion
+#   ③ CPU 伪装                   — 按需（仅 cpu_spoof / cpu_spoof_custom 时）
+#   ④ DlClose                    — 始终执行（零模块驻留）
 #
 # 用户不再需要理解 lite/full/companion 的区别。
 #
@@ -274,13 +271,6 @@ manufacturer = "vivo"
 # - 覆盖 __system_property_get 和 __system_property_read_callback（同一份 mmap）
 # - 无 GOT/PLT 修改，无 JNI native method 替换
 # - 模块写完即 DlClose，/proc/self/maps 干净
-#
-# 【降级路径】
-# 如果 COW 在某设备不兼容，可为特定 app 设置 mode = "full"：
-#   [[apps]]
-#   package = "com.example.app"
-#   mode = "full"
-# 这将回退到旧 PLT hook 实现（模块驻留内存，隐蔽性较低）。
 #
 # 【__DELETE__ 标记】
 # 设置属性值为 "__DELETE__" 可通过 companion resetprop 删除该属性。
