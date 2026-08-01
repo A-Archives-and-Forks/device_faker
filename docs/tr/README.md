@@ -13,16 +13,14 @@ Zygisk tabanlı, farklı uygulamalar için farklı cihaz modellerini yapılandı
 
 ## Özellikler ✨
 
-* 🎯 **Hassas Kontrol**: Her uygulama için cihaz bilgilerini ayrı ayrı yapılandırın.
+* 🎯 **Hassas Kontrol**: Her uygulama için cihaz bilgilerini ayrı ayrı yapılandırın; yalnızca yapılandırılmış uygulamalarda etkili olur.
 * 📁 **Şablon Yönetimi**: Birden fazla cihaz şablonu oluşturun ve bunları kolayca birden fazla paket adına uygulayın.
 * 🔄 **Anında Etki**: Yapılandırmayı değiştirdikten sonra yalnızca uygulamayı yeniden başlatmanız yeterlidir, sistemi yeniden başlatmanıza gerek yoktur.
 * 🛡️ **Güvenli ve Kararlı**: Zygisk altyapısı üzerine kurulmuştur ve modüler tasarıma sahiptir.
 * 📝 **Basit Yapılandırma**: Düzenlemesi kolay TOML formatındaki yapılandırma dosyalarını kullanır.
-* ⚡ **Performans Odaklı**: Yalnızca yapılandırılmış uygulamalarda etkili olur, diğer uygulamaları etkilemez.
-* 🎭 **Üç Mod Desteği**:
-    * **Lite Mod**: Hafif ve düşük iz bırakan sahteleştirme.
-    * **Full Mod**: Kapsamlı cihaz sahteleştirme.
-    * **Companion Modu**: Sistem özelliklerini ve CPU bilgisini taklit eder.
+* 🎭 **Birleşik Yürütme Akışı**: Mod seçimi gerektirmez; JNI alan sahteleştirmesi, COW özellik sahteleştirmesi ve companion hizmetleri otomatik olarak yönetilir.
+* 🔒 **COW Özellik Motoru**: Sistem özelliklerini mmap copy-on-write ile sahteleştirir; süreç başına izolasyon ve sıfır kalıcılık.
+* 🧬 **CPU Taklidi**: Uygulama başına /proc/cpuinfo taklidi.
 * 🌐 **WebUI Yönetimi**: Yapılandırmaları kolayca yönetebilmeniz için grafiksel bir web arayüzü sunar.
 
 
@@ -30,10 +28,10 @@ Zygisk tabanlı, farklı uygulamalar için farklı cihaz modellerini yapılandı
 
 Device Faker modern, web tabanlı bir yönetim arayüzü sunar.
 
-- 📊 **Durum Görüntüleme**: Modülün çalışma durumunu gerçek zamanlı olarak görüntüleme imkanı sunar
 - 📋 **Şablon Yönetimi**: Cihaz şablonları oluşturun, düzenleyin ve silin; birden fazla paket adına toplu olarak uygulayın
-- 📱 **Uygulama Yönetimi**: Yüklü uygulamalar ve bunların yapılandırma durumuna ilişkin sezgisel bir görünüm
+- 📱 **Uygulama Yönetimi**: Yüklü uygulamalar ve bunların yapılandırma durumuna ilişkin sezgisel bir görünüm; çok kullanıcılı uygulamaların görüntülenmesini destekler
 - 🖋️ **Yapılandırma Düzenleme**: Uygulama yapılandırmasını düzenlemek için grafik arayüz; şablon uygulamaları ve özel yapılandırmaları destekler
+- 🌍 **Çoklu Dil Desteği**: 简体中文, English, Türkçe
 
 ## Yapılandırma Rehberi ⚙️
 

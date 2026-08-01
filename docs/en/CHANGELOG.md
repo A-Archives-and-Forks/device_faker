@@ -1,5 +1,28 @@
 # 📝 Changelog
 
+## ⬆️[v1.4.0 → v1.5.0] - 2026-08-01
+
+### 🆕 New Features
+- 🌍 Added Turkish language translations
+- 🧬 Added CPU camouflage
+- 👥 WebUI apps page supports multi-user apps display
+- 📦 Installer script added Zygisk detection and automatic Chinese/English language switching
+- 🔒 New COW property spoofing engine — replaces full mode, per-process isolation with zero residency
+- 🔄 companion_resetprop switch replaces resetprop mode
+- 🏷️ Added Build.HARDWARE camouflage at Build layer
+
+### ⚡ Improvements
+- ⚡ Optimized module underlying performance (by @Tools-cx-app)
+- 👆 WebUI supports step-by-step swipe-back navigation
+- 🎬 Optimized WebUI page transition animations
+- 🏗️ Refactored logging system
+- 🎨 Optimized WebUI styles
+- 📦 Updated WebUI build dependencies
+- 🏗️ Removed WebUI-X API, adopted pure KernelSU WebUI API
+- 🏎️ resetprop enabled skip_svc direct write + property area compaction
+- 🏗️ Removed mode distinction — unified into single COW + companion execution flow
+- 🔄 Refactored and optimized companion resetprop restore mechanism
+
 ## ⬆️[v1.3.5 → v1.4.0] - 2026-05-02
 
 ### 🆕 New Features
