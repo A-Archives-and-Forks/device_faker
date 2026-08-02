@@ -102,9 +102,10 @@ export const useConfigStore = defineStore('config', () => {
     try {
       const configToSave = sanitizeConfigForSave(config.value)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const content = stringifyToml(configToSave as any)
+      let content = stringifyToml(configToSave as any)
       if (!content || content.trim().length === 0) {
-        throw new Error(t('config.empty_content'))
+        // 空配置也需保持文件非空（写后校验与下次加载都按内容非空判断），用注释占位，不写任何键
+        content = '# 空配置，全部使用模块默认值\n'
       }
 
       await writeFile(CONFIG_PATH, content)

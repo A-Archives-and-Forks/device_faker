@@ -103,10 +103,14 @@ export function formDataToTemplate(formData: DeviceFakerFormData, base?: Templat
 
   if (formData.force_denylist_unmount !== undefined) {
     template.force_denylist_unmount = formData.force_denylist_unmount
+  } else {
+    delete template.force_denylist_unmount
   }
 
   if (formData.companion_resetprop !== undefined) {
     template.companion_resetprop = formData.companion_resetprop
+  } else {
+    delete template.companion_resetprop
   }
 
   if (formData.packages.length > 0) {
@@ -193,7 +197,7 @@ export function formDataToAppConfig(formData: DeviceFakerFormData, packageName: 
     sdk_int: formData.sdk_int ? Number(formData.sdk_int) : undefined,
     characteristics: formData.characteristics,
     force_denylist_unmount: formData.force_denylist_unmount,
-    companion_resetprop: formData.companion_resetprop || undefined,
+    companion_resetprop: formData.companion_resetprop,
     cpu_spoof: formData.cpu_spoof || undefined,
     cpu_spoof_custom: formData.cpu_spoof_custom || undefined,
   }

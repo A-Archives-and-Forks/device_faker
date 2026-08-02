@@ -206,15 +206,6 @@ export function sanitizeConfigForSave(input: Config): Config {
     }
   }
 
-  if (
-    !normalized.default_force_denylist_unmount &&
-    !normalized.debug &&
-    !normalized.templates &&
-    !normalized.apps
-  ) {
-    normalized.default_force_denylist_unmount = false
-  }
-
   return normalized
 }
 
