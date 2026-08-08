@@ -61,34 +61,6 @@
     <div class="settings-section glass-effect">
       <h2 class="section-title">{{ t('settings.module.title') }}</h2>
 
-      <div class="setting-item">
-        <div class="setting-info">
-          <div class="setting-icon">
-            <Shield :size="24" />
-          </div>
-          <div class="setting-text">
-            <div
-              style="
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                margin-bottom: 0.25rem;
-              "
-            >
-              <h3 class="setting-name" style="margin-bottom: 0; white-space: normal">
-                {{ t('settings.module.force_denylist_unmount.label') }}
-              </h3>
-              <el-switch
-                v-model="defaultForceDenylistUnmount"
-                class="setting-control-switch"
-                @change="onForceDenylistUnmountChange"
-              />
-            </div>
-            <p class="setting-desc">{{ t('settings.module.force_denylist_unmount.desc') }}</p>
-          </div>
-        </div>
-      </div>
-
       <div class="setting-item setting-item-horizontal">
         <div class="setting-info">
           <div class="setting-icon">
@@ -142,7 +114,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onActivated } from 'vue'
-import { Moon, Globe, Bug, FileUp, Shield } from 'lucide-vue-next'
+import { Moon, Globe, Bug, FileUp } from 'lucide-vue-next'
 import { useConfigStore } from '../stores/config'
 import { useSettingsStore } from '../stores/settings'
 import { execCommand, readFile } from '../utils/ksu'
@@ -163,7 +135,6 @@ const { t } = useI18n()
 
 const currentTheme = ref(settingsStore.theme)
 const currentLanguage = ref(settingsStore.language)
-const defaultForceDenylistUnmount = ref(configStore.config.default_force_denylist_unmount || false)
 const debugMode = ref(configStore.config.debug || false)
 
 const convertDialogVisible = ref(false)
@@ -178,16 +149,6 @@ function onThemeChange(value: string) {
 
 function onLanguageChange(value: string) {
   settingsStore.setLanguage(value as 'system' | 'zh' | 'en' | 'tr')
-}
-
-async function onForceDenylistUnmountChange(value: boolean) {
-  configStore.config.default_force_denylist_unmount = value
-  try {
-    await configStore.saveConfig()
-    toast(t('common.saved'))
-  } catch {
-    toast(t('settings.messages.save_failed'))
-  }
 }
 
 async function onDebugChange(value: boolean) {
@@ -285,16 +246,6 @@ async function saveConvertedTemplate() {
 
 // 监听配置变化（只创建一次监听器）
 watch(
-  () => configStore.config.default_force_denylist_unmount,
-  (newValue: boolean | undefined) => {
-    const val = newValue || false
-    if (defaultForceDenylistUnmount.value !== val) {
-      defaultForceDenylistUnmount.value = val
-    }
-  }
-)
-
-watch(
   () => configStore.config.debug,
   (newDebug: boolean | undefined) => {
     const newValue = newDebug || false
@@ -308,7 +259,6 @@ watch(
 onActivated(() => {
   currentTheme.value = settingsStore.theme
   currentLanguage.value = settingsStore.language
-  defaultForceDenylistUnmount.value = configStore.config.default_force_denylist_unmount || false
   debugMode.value = configStore.config.debug || false
 })
 </script>
