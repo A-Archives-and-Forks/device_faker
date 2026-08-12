@@ -63,7 +63,7 @@ chooseport() {
         fi
         count=$((count + 1))
     done
-    return 0
+    return 1
 }
 
 tr_print "- 安装 Device Faker 模块" "- Installing Device Faker module"
@@ -77,7 +77,7 @@ if [ -f "$CONFIG_FILE" ]; then
     tr_print "- 请选择配置文件处理方式：" "- Choose how to handle config:"
     tr_print "  [音量+] 使用模块默认配置（备份原有配置）" "  [Vol+] Use default config (backup existing)"
     tr_print "  [音量-] 使用现有配置" "  [Vol-] Keep existing config"
-    tr_print "- 10秒内未选择将使用模块默认配置" "- Default config will be used if no choice within 10s"
+    tr_print "- 10秒内未选择将保留现有配置" "- Existing config will be kept if no choice within 10s"
 
     if chooseport; then
         tr_print "- 已选择：使用模块默认配置" "- Selected: use default config"
