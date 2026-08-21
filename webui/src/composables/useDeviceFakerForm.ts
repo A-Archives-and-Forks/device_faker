@@ -1,8 +1,13 @@
 import { inject, provide, ref, type InjectionKey, type Ref } from 'vue'
-import type { Template, AppConfig } from '../types'
+import type { CustomProps, Template, AppConfig } from '../types'
 
 export const DEVICE_FAKER_FORM_KEY: InjectionKey<Ref<DeviceFakerFormData>> =
   Symbol('deviceFakerForm')
+
+export interface CustomPropEntry {
+  key: string
+  value: string
+}
 
 export interface DeviceFakerFormData {
   manufacturer: string
@@ -24,6 +29,27 @@ export interface DeviceFakerFormData {
   packages: string[]
   cpu_spoof: string
   cpu_spoof_custom: string
+  customProps: CustomPropEntry[]
+}
+
+function customPropsToEntries(customProps?: CustomProps): CustomPropEntry[] {
+  if (!customProps) return []
+  return Object.entries(customProps).map(([key, value]) => ({ key, value: value ?? '' }))
+}
+
+function entriesToCustomProps(entries: CustomPropEntry[]): CustomProps {
+  const result: CustomProps = {}
+
+  for (const entry of entries) {
+    const key = entry.key.trim()
+    if (!key) continue
+    // 同名 key 后写的覆盖先写的
+    result[key] = entry.value
+  }
+
+  // 空对象表示"表单已管理且用户清空"，避免 merge 时保留旧 custom_props；
+  // 空对象在 sanitizeConfigForSave 的 normalizeCustomProps 中被丢弃，不写入 TOML
+  return result
 }
 
 function createEmptyFormData(): DeviceFakerFormData {
@@ -47,6 +73,7 @@ function createEmptyFormData(): DeviceFakerFormData {
     packages: [],
     cpu_spoof: '',
     cpu_spoof_custom: '',
+    customProps: [],
   }
 }
 
@@ -144,6 +171,8 @@ export function formDataToTemplate(formData: DeviceFakerFormData, base?: Templat
     delete template.cpu_spoof_custom
   }
 
+  template.custom_props = entriesToCustomProps(formData.customProps)
+
   return template
 }
 
@@ -168,6 +197,7 @@ export function templateToFormData(template: Template): DeviceFakerFormData {
     packages: template.packages || [],
     cpu_spoof: template.cpu_spoof || '',
     cpu_spoof_custom: template.cpu_spoof_custom || '',
+    customProps: customPropsToEntries(template.custom_props),
   }
 }
 
@@ -192,6 +222,7 @@ export function appConfigToFormData(appConfig: AppConfig): DeviceFakerFormData {
     packages: [],
     cpu_spoof: appConfig.cpu_spoof || '',
     cpu_spoof_custom: appConfig.cpu_spoof_custom || '',
+    customProps: customPropsToEntries(appConfig.custom_props),
   }
 }
 
@@ -222,6 +253,7 @@ export function formDataToAppConfig(formData: DeviceFakerFormData, packageName: 
     companion_resetprop: formData.companion_resetprop,
     cpu_spoof: formData.cpu_spoof || undefined,
     cpu_spoof_custom: formData.cpu_spoof_custom || undefined,
+    custom_props: entriesToCustomProps(formData.customProps),
   }
 }
 

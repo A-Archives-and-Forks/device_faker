@@ -93,6 +93,7 @@ export const messages = {
         cpu_spoof: 'CPU 伪装预设',
         cpu_spoof_custom: '自定义 CPU 信息',
         companion_resetprop: 'Companion Resetprop',
+        custom_props: '自定义属性',
       },
       placeholders: {
         name: '例如：redmagic_9_pro',
@@ -114,6 +115,15 @@ export const messages = {
         packages: '输入或搜索应用包名',
         cpu_spoof: '选择 config.toml 中的 CPU 预设',
         cpu_spoof_custom: '留空则使用上方预设；填写后将完全自定义 /proc/cpuinfo 内容',
+        custom_prop_key: '属性名，例如 ro.vendor.xxx',
+        custom_prop_value: '属性值',
+      },
+      customProps: {
+        add: '添加属性',
+        set_empty: '置空（__EMPTY__）',
+        set_delete: '删除属性（__DELETE__）',
+        manual: '手动输入值',
+        empty: '暂无自定义属性',
       },
       empty: {
         title: '暂无机型模板',
@@ -467,6 +477,7 @@ export const messages = {
         cpu_spoof: 'CPU Spoof Preset',
         cpu_spoof_custom: 'Custom CPU Info',
         companion_resetprop: 'Companion Resetprop',
+        custom_props: 'Custom Properties',
       },
       placeholders: {
         name: 'e.g. redmagic_9_pro',
@@ -489,6 +500,15 @@ export const messages = {
         cpu_spoof: 'Select a CPU preset from config.toml',
         cpu_spoof_custom:
           'Leave empty to use the preset above; fill in to fully customize /proc/cpuinfo',
+        custom_prop_key: 'Property name, e.g. ro.vendor.xxx',
+        custom_prop_value: 'Property value',
+      },
+      customProps: {
+        add: 'Add Property',
+        set_empty: 'Set Empty (__EMPTY__)',
+        set_delete: 'Delete Property (__DELETE__)',
+        manual: 'Manual Input',
+        empty: 'No custom properties',
       },
       empty: {
         title: 'No Templates Found',
@@ -844,6 +864,7 @@ export const messages = {
         cpu_spoof: 'CPU Sahtekarlık Preseti',
         cpu_spoof_custom: 'Özel CPU Bilgisi',
         companion_resetprop: 'Companion Resetprop',
+        custom_props: 'Özel Özellikler',
       },
       placeholders: {
         name: 'redmagic_9_pro vs.',
@@ -865,6 +886,15 @@ export const messages = {
         cpu_spoof: 'config.toml dosyasından bir CPU preset seçin',
         cpu_spoof_custom:
           'Yukarıdaki preset kullanmak için boş bırakın; /proc/cpuinfo içeriğini tamamen özelleştirmek için doldurun',
+        custom_prop_key: 'Özellik adı, örn. ro.vendor.xxx',
+        custom_prop_value: 'Özellik değeri',
+      },
+      customProps: {
+        add: 'Özellik Ekle',
+        set_empty: 'Boş Yap (__EMPTY__)',
+        set_delete: 'Özelliği Sil (__DELETE__)',
+        manual: 'Manuel Giriş',
+        empty: 'Özel özellik yok',
       },
       empty: {
         title: 'Hiç Şablon Bulunamadı',
