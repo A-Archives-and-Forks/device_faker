@@ -97,6 +97,9 @@ function normalizeDeviceInfoFields(source: UnknownRecord): Partial<DeviceInfo> {
   const sdkInt = asOptionalInteger(source.sdk_int)
   if (sdkInt !== undefined) normalized.sdk_int = sdkInt
 
+  const dpi = asOptionalInteger(source.dpi)
+  if (dpi !== undefined && dpi >= 120 && dpi <= 640) normalized.dpi = dpi
+
   const customProps = normalizeCustomProps(source.custom_props)
   if (customProps !== undefined) normalized.custom_props = customProps
 

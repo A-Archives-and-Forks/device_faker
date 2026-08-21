@@ -3,6 +3,13 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde::Deserialize;
 
+pub const DPI_MIN: u32 = 120;
+pub const DPI_MAX: u32 = 640;
+
+fn valid_dpi(value: Option<u32>) -> Option<u32> {
+    value.filter(|dpi| (DPI_MIN..=DPI_MAX).contains(dpi))
+}
+
 /// 机型模板
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceTemplate {
@@ -38,6 +45,9 @@ pub struct DeviceTemplate {
     /// SDK 版本伪装（如 35, 34）
     #[serde(default)]
     pub sdk_int: Option<u32>,
+    /// 临时覆盖系统显示密度（120–640），由 companion 使用 `wm density` 应用
+    #[serde(default)]
+    pub dpi: Option<u32>,
     /// 自定义属性映射表
     #[serde(default)]
     pub custom_props: Option<HashMap<String, String>>,
@@ -91,6 +101,9 @@ pub struct AppConfig {
     /// SDK 版本伪装（如 35, 34）
     #[serde(default)]
     pub sdk_int: Option<u32>,
+    /// 临时覆盖系统显示密度（120–640），由 companion 使用 `wm density` 应用
+    #[serde(default)]
+    pub dpi: Option<u32>,
     /// 自定义属性映射表
     #[serde(default)]
     pub custom_props: Option<HashMap<String, String>>,
@@ -172,6 +185,7 @@ impl Config {
                 characteristics: app.characteristics.clone(),
                 android_version: app.android_version.clone(),
                 sdk_int: app.sdk_int,
+                dpi: valid_dpi(app.dpi),
                 custom_props: app.custom_props.clone(),
                 force_denylist_unmount: app
                     .force_denylist_unmount
@@ -205,6 +219,7 @@ impl Config {
                 characteristics: template.characteristics.clone(),
                 android_version: template.android_version.clone(),
                 sdk_int: template.sdk_int,
+                dpi: valid_dpi(template.dpi),
                 custom_props: template.custom_props.clone(),
                 force_denylist_unmount: template
                     .force_denylist_unmount
@@ -463,6 +478,8 @@ pub struct MergedAppConfig {
     pub characteristics: Option<String>,
     pub android_version: Option<String>,
     pub sdk_int: Option<u32>,
+    /// 最终显示密度覆盖值，超出 120–640 的配置会被忽略
+    pub dpi: Option<u32>,
     pub custom_props: Option<HashMap<String, String>>,
     pub force_denylist_unmount: bool,
     /// CPU 伪装预设名称

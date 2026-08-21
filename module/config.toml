@@ -254,8 +254,9 @@ manufacturer = "vivo"
 #   ② 属性伪装                   — companion_resetprop = true 时全部走
 #                                  companion resetprop；否则 COW 优先，
 #                                  COW 未找到的属性与 __DELETE__ 走 companion
-#   ③ CPU 伪装                   — 按需（仅 cpu_spoof / cpu_spoof_custom 时）
-#   ④ DlClose                    — 始终执行（零模块驻留）
+#   ③ DPI 伪装                   — 按需（仅设置 dpi 时）
+#   ④ CPU 伪装                   — 按需（仅 cpu_spoof / cpu_spoof_custom 时）
+#   ⑤ DlClose                    — 始终执行（零模块驻留）
 #
 # 用户不再需要理解 lite/full/companion 的区别。
 #
@@ -280,3 +281,7 @@ manufacturer = "vivo"
 # 在模板或 [[apps]] 中设置 cpu_spoof 引用 cpu_presets 预设，
 # 或直接设置 cpu_spoof_custom 自定义 /proc/cpuinfo 内容。
 # 有 CPU 伪装配置时，自动通过 companion fork + setns + bind mount 实现。
+#
+# 【DPI 伪装】
+# 在模板或 [[apps]] 中设置 dpi = 420。
+# 保存原始值，并在应用退后台/退出后自动恢复。

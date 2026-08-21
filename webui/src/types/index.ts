@@ -23,6 +23,7 @@ export interface DeviceInfo {
   characteristics?: string
   android_version?: string
   sdk_int?: number
+  dpi?: number
   custom_props?: CustomProps
   force_denylist_unmount?: boolean
   companion_resetprop?: boolean

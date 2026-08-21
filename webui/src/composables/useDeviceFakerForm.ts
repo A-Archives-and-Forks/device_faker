@@ -17,6 +17,7 @@ export interface DeviceFakerFormData {
   build_id: string
   android_version: string
   sdk_int: string
+  dpi: string
   characteristics: string
   force_denylist_unmount: boolean | undefined
   companion_resetprop: boolean | undefined
@@ -39,6 +40,7 @@ function createEmptyFormData(): DeviceFakerFormData {
     build_id: '',
     android_version: '',
     sdk_int: '',
+    dpi: '',
     characteristics: '',
     force_denylist_unmount: undefined,
     companion_resetprop: undefined,
@@ -81,6 +83,17 @@ export function formDataToTemplate(formData: DeviceFakerFormData, base?: Templat
     }
   } else {
     delete template.sdk_int
+  }
+
+  if (formData.dpi) {
+    const dpi = Number(formData.dpi)
+    if (Number.isInteger(dpi) && dpi >= 120 && dpi <= 640) {
+      template.dpi = dpi
+    } else {
+      delete template.dpi
+    }
+  } else {
+    delete template.dpi
   }
 
   if (formData.name) {
@@ -148,6 +161,7 @@ export function templateToFormData(template: Template): DeviceFakerFormData {
     build_id: template.build_id || '',
     android_version: template.android_version || '',
     sdk_int: template.sdk_int ? String(template.sdk_int) : '',
+    dpi: template.dpi ? String(template.dpi) : '',
     characteristics: template.characteristics || '',
     force_denylist_unmount: template.force_denylist_unmount,
     companion_resetprop: template.companion_resetprop,
@@ -171,6 +185,7 @@ export function appConfigToFormData(appConfig: AppConfig): DeviceFakerFormData {
     build_id: appConfig.build_id || '',
     android_version: appConfig.android_version || '',
     sdk_int: appConfig.sdk_int ? String(appConfig.sdk_int) : '',
+    dpi: appConfig.dpi ? String(appConfig.dpi) : '',
     characteristics: appConfig.characteristics || '',
     force_denylist_unmount: appConfig.force_denylist_unmount,
     companion_resetprop: appConfig.companion_resetprop,
@@ -195,6 +210,13 @@ export function formDataToAppConfig(formData: DeviceFakerFormData, packageName: 
     build_id: formData.build_id,
     android_version: formData.android_version,
     sdk_int: formData.sdk_int ? Number(formData.sdk_int) : undefined,
+    dpi:
+      formData.dpi &&
+      Number.isInteger(Number(formData.dpi)) &&
+      Number(formData.dpi) >= 120 &&
+      Number(formData.dpi) <= 640
+        ? Number(formData.dpi)
+        : undefined,
     characteristics: formData.characteristics,
     force_denylist_unmount: formData.force_denylist_unmount,
     companion_resetprop: formData.companion_resetprop,

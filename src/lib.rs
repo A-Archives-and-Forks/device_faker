@@ -174,10 +174,14 @@ impl MyModule {
         if merged.companion_resetprop {
             // 全属性走 companion resetprop（getprop 和进程内读取一致）
             let delete_props = Config::build_delete_props_list(&merged);
-            if !prop_map.is_empty() || !delete_props.is_empty() {
-                if let Err(e) =
-                    spoof_system_props_via_companion(api, &prop_map, &delete_props, &package_name)
-                {
+            if !prop_map.is_empty() || !delete_props.is_empty() || merged.dpi.is_some() {
+                if let Err(e) = spoof_system_props_via_companion(
+                    api,
+                    &prop_map,
+                    &delete_props,
+                    &package_name,
+                    merged.dpi,
+                ) {
                     error!("Companion resetprop (full) failed: {e:?}");
                 } else if config.debug {
                     info!(
@@ -198,13 +202,14 @@ impl MyModule {
             };
 
             let delete_props = Config::build_delete_props_list(&merged);
-            if !unfound_props.is_empty() || !delete_props.is_empty() {
+            if !unfound_props.is_empty() || !delete_props.is_empty() || merged.dpi.is_some() {
                 let unfound_map: HashMap<String, String> = unfound_props.into_iter().collect();
                 if let Err(e) = spoof_system_props_via_companion(
                     api,
                     &unfound_map,
                     &delete_props,
                     &package_name,
+                    merged.dpi,
                 ) {
                     error!("Companion resetprop failed: {e:?}");
                 } else if config.debug {
@@ -217,7 +222,7 @@ impl MyModule {
             }
         }
 
-        // ④ Companion 按需：CPU spoof
+        // ③ Companion 按需：CPU spoof
         //    - 配置了 cpu_spoof: 走原有 apply_cpu_spoof 流程
         //    - 未配置 cpu_spoof: 主动卸载可能泄漏到本应用 namespace 的 /proc/cpuinfo
         //      bind mount（内部 spoof_active_flag_exists() 决定是否走完整路径）
@@ -235,7 +240,7 @@ impl MyModule {
             }
         }
 
-        // ⑤ DlClose（始终执行）
+        // ④ DlClose（始终执行）
         api.set_option(ZygiskOption::DlCloseModuleLibrary);
         Ok(())
     }

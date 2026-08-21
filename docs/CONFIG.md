@@ -143,6 +143,10 @@ manufacturer = "Samsung"
 | `android_version` | `Build.VERSION.RELEASE` | `ro.build.version.release`、`ro.system.build.version.release`、`ro.vendor.build.version.release`、`ro.product.build.version.release` | `"15"`, `"14"`, `"13"` |
 | `sdk_int` | `Build.VERSION.SDK_INT`（整数） | `ro.build.version.sdk`、`ro.system.build.version.sdk`、`ro.vendor.build.version.sdk`、`ro.product.build.version.sdk` | `35`, `34`, `33` |
 
+### DPI伪装
+
+在模板或 `[[apps]]` 中设置 `dpi`（范围 `120`–`640`），例如 `dpi = 420`。模块先保存当前的DPI；目标应用退后台约 2 秒或退出后恢复原值，回到前台时重新应用。没有备份时会重置`。
+
 ### 自定义属性
 
 `custom_props` 可设置任意系统属性（直接写入，无分区变体展开），支持在模板与 `[[apps]]` 中使用，也支持[特殊标记值](#特殊标记值)：
@@ -174,6 +178,7 @@ manufacturer = "Custom"
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | `companion_resetprop` | `false` | `true` 时跳过 COW，所有属性交给 companion 进程 `resetprop` 写入（直写属性区，绕过 property_service），全系统读取一致；`false`（默认）时 COW 优先，仅影响当前进程内存。详见 [属性伪造机制](#属性伪造机制) |
+| `dpi` | — | 临时设置系统显示 density（`wm density`），范围 `120`–`640`；由 companion 保存并恢复原始 override |
 | `force_denylist_unmount` | 继承 `default_force_denylist_unmount` | 对该应用强制启用 Zygisk `FORCE_DENYLIST_UNMOUNT`；优先级：应用 > 模板 > 全局默认 |
 | `cpu_spoof` | — | CPU 伪装预设名，引用 `[cpu_presets]`，详见 [CPU 伪装](#cpu-伪装) |
 | `cpu_spoof_custom` | — | 直接指定 `/proc/cpuinfo` 内容，优先级高于 `cpu_spoof` |
@@ -198,7 +203,7 @@ manufacturer = "Custom"
 所有应用统一走同一执行流（无需选择模式）：
 
 ```
-① JNI 覆写 Build 静态字段 → ② COW 或 companion resetprop → ③ CPU 伪装 → ④ DlClose 卸载模块
+① JNI 覆写 Build 静态字段 → ② COW 或 companion resetprop → ③ DPI 伪装 → ④ CPU 伪装 → ⑤ DlClose 卸载模块
 ```
 
 - **COW（默认）**：通过 mmap COW 重映射属性区文件，直接覆写属性内存，覆盖 `__system_property_get` / `__system_property_read_callback` 的 native 读取；无 GOT/PLT 修改；**只影响当前进程**的内存映射；模块写完立即 DlClose，零驻留
@@ -247,6 +252,7 @@ product = "popsicle"
 name = "popsicle"
 android_version = "15"
 sdk_int = 35
+dpi = 420                       # 临时屏幕密度（120–640）
 force_denylist_unmount = true  # 覆盖全局默认，仅对该应用启用
 
 [[apps]]

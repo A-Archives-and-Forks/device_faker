@@ -66,6 +66,16 @@
           :placeholder="t('templates.placeholders.sdk_int')"
         />
       </el-form-item>
+
+      <el-form-item :label="t('templates.fields.dpi')">
+        <el-input
+          v-model="formData.dpi"
+          type="number"
+          min="120"
+          max="640"
+          :placeholder="t('templates.placeholders.dpi')"
+        />
+      </el-form-item>
     </el-collapse-item>
   </el-collapse>
 

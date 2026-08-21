@@ -143,6 +143,10 @@ The following fields can be used in templates or `[[apps]]`. Each field drives b
 | `android_version` | `Build.VERSION.RELEASE` | `ro.build.version.release`, `ro.system.build.version.release`, `ro.vendor.build.version.release`, `ro.product.build.version.release` | `"15"`, `"14"`, `"13"` |
 | `sdk_int` | `Build.VERSION.SDK_INT` (integer) | `ro.build.version.sdk`, `ro.system.build.version.sdk`, `ro.vendor.build.version.sdk`, `ro.product.build.version.sdk` | `35`, `34`, `33` |
 
+### Per-app DPI
+
+Set `dpi` (range `120`–`640`) in a template or `[[apps]]`, for example `dpi = 420`. The root companion runs `wm density 420` after saving the current density override. It restores the original value about 2 seconds after the target app goes to the background or exits, and reapplies it when the app returns to the foreground. If there was no override, it restores with `wm density reset`.
+
 ### Custom Properties
 
 `custom_props` sets arbitrary system properties (written verbatim, no partition-variant expansion), usable in both templates and `[[apps]]`, and supports [special marker values](#special-marker-values):
@@ -174,6 +178,7 @@ manufacturer = "Custom"
 | Field | Default | Description |
 |-------|---------|-------------|
 | `companion_resetprop` | `false` | When `true`, skips COW and sends all properties through the companion `resetprop` (writes the property area directly, bypassing property_service) for system-wide consistent reads; when `false` (default), COW takes priority — it only affects the current process's memory. See [Property Spoofing Mechanism](#property-spoofing-mechanism) |
+| `dpi` | — | Temporarily sets system display density via `wm density`; range `120`–`640`; the companion saves and restores the original override |
 | `force_denylist_unmount` | inherits `default_force_denylist_unmount` | Force-enable Zygisk `FORCE_DENYLIST_UNMOUNT` for this app; priority: app > template > global default |
 | `cpu_spoof` | — | CPU spoofing preset name referencing `[cpu_presets]`; see [CPU Spoofing](#cpu-spoofing) |
 | `cpu_spoof_custom` | — | Raw `/proc/cpuinfo` content; takes priority over `cpu_spoof` |
@@ -198,7 +203,7 @@ The companion process bind-mounts fake `/proc/cpuinfo` content into the target a
 All apps go through the same unified flow (no mode selection needed):
 
 ```
-① JNI overwrite of Build static fields → ② COW or companion resetprop → ③ CPU spoofing → ④ DlClose unload
+① JNI overwrite of Build static fields → ② COW or companion resetprop → ③ DPI spoofing → ④ CPU spoofing → ⑤ DlClose unload
 ```
 
 - **COW (default)**: remaps the property-area file with mmap COW and overwrites property memory in place, covering native reads via `__system_property_get` / `__system_property_read_callback`; no GOT/PLT modification; **only affects the current process's** memory mapping; the module calls DlClose right after writing, leaving zero resident footprint
@@ -247,6 +252,7 @@ product = "popsicle"
 name = "popsicle"
 android_version = "15"
 sdk_int = 35
+dpi = 420                       # temporary display density (120–640)
 force_denylist_unmount = true  # overrides the global default, this app only
 
 [[apps]]
