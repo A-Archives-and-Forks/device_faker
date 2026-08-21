@@ -17,7 +17,8 @@ tr_print() {
 check_zygisk() {
     local MAGISK_DIR="/data/adb/magisk"
 
-    if find /data/adb/modules /data/adb/modules_update -name "libzygisk.so" 2>/dev/null | grep -q .; then
+    # libzygisk.so: ZygiskNext etc.; libzygisk64.so: YukiZygisk
+    if find /data/adb/modules /data/adb/modules_update \( -name "libzygisk.so" -o -name "libzygisk64.so" \) 2>/dev/null | grep -q .; then
         return 0
     fi
 
