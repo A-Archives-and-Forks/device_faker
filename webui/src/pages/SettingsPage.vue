@@ -114,7 +114,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onActivated } from 'vue'
-import { Moon, Globe, Bug, FileUp } from 'lucide-vue-next'
+import { Moon, Globe, Bug, FileUp } from '@lucide/vue'
 import { useConfigStore } from '../stores/config'
 import { useSettingsStore } from '../stores/settings'
 import { execCommand, readFile } from '../utils/ksu'

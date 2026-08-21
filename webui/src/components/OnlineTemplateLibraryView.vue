@@ -194,7 +194,7 @@ import {
   RotateCw,
   Search,
   X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import OnlineTemplateVirtualList from './OnlineTemplateVirtualList.vue'
 import { useOnlineTemplatesStore } from '../stores/onlineTemplates'
 import { useI18n } from '../utils/i18n'

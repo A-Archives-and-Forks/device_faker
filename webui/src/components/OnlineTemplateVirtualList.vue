@@ -133,7 +133,7 @@
 <script setup lang="ts">
 import { layout, prepare } from '@chenglou/pretext'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { AlertTriangle, Download, LoaderCircle, RefreshCw } from 'lucide-vue-next'
+import { AlertTriangle, Download, LoaderCircle, RefreshCw } from '@lucide/vue'
 import type { OnlineTemplateDetail, OnlineTemplateRecord, OnlineTemplateLoadState } from '../types'
 import { useI18n } from '../utils/i18n'
 

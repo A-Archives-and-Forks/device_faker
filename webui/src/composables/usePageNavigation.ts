@@ -1,5 +1,5 @@
 import { computed, defineAsyncComponent, defineComponent, h, ref } from 'vue'
-import { Home, FileText, Smartphone, Settings } from 'lucide-vue-next'
+import { Home, FileText, Smartphone, Settings } from '@lucide/vue'
 import AppsPageSkeleton from '../components/apps/AppsPageSkeleton.vue'
 import { useAppsStore } from '../stores/apps'
 import { useConfigStore } from '../stores/config'

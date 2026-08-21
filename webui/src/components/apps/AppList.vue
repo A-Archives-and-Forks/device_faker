@@ -76,7 +76,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
-import { Smartphone, ChevronRight, Check } from 'lucide-vue-next'
+import { Smartphone, ChevronRight, Check } from '@lucide/vue'
 import { useI18n } from '../../utils/i18n'
 import { useAppIcons } from '../../composables/useAppIcons'
 import type { InstalledApp } from '../../types'

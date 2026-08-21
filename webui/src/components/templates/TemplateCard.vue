@@ -101,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { Copy, Edit2, Trash2 } from 'lucide-vue-next'
+import { Copy, Edit2, Trash2 } from '@lucide/vue'
 import { toRefs } from 'vue'
 import { useI18n } from '../../utils/i18n'
 import type { Template } from '../../types'

@@ -273,7 +273,9 @@
 
         <div class="follow-row">
           <div class="follow-row-icon gradient-icon-4">
-            <Github :size="20" />
+            <svg viewBox="0 0 24 24" role="img" width="20" height="20" aria-hidden="true">
+              <path :d="siGithub.path" fill="currentColor" />
+            </svg>
           </div>
           <div class="follow-row-body">
             <span class="follow-row-label">{{ t('status.follow.repository') }}</span>
@@ -308,8 +310,7 @@ import {
   Languages,
   HeartHandshake,
   MessageCircleMore,
-  Github,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { siGithub, siQq, siTelegram } from 'simple-icons'
 import { useConfigStore } from '../stores/config'
 import { projectTranslators, useI18n } from '../utils/i18n'
