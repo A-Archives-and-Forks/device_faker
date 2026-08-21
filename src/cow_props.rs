@@ -14,7 +14,7 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use log::{info, warn};
-use prop_rs_android::mmap_prop_area::MmapPropArea;
+use prop_rs_android::mmap_prop_area::{MmapPropArea, PROP_INFO_LONG_FLAG};
 
 // ── bionic 类型定义 ────────────────────────────────────────────────────────
 
@@ -74,16 +74,27 @@ pub fn apply_cow_spoof(
         }
     };
 
+    // 长值不预过滤：已存在的 long 模式 prop（如 ro.build.fingerprint，
+    // 设备原生值就 > 92 字节）可原地 update；inline prop 超长与全新长值
+    // 属性由 remove+emplace / emplace(long) 路径处理。
     let filtered: Vec<(&str, &str)> = prop_map
         .iter()
-        .filter(|(_, v)| !v.is_empty() && v.len() <= PROP_VALUE_MAX)
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    if filtered.is_empty() {
-        return Ok(unfound);
+    // 预热：逐 key 调用 find()，触发 bionic 对尚未映射 context area 的
+    // 惰性映射（本进程域允许的 area 在此刻完成映射；被 SELinux 拒绝的
+    // context 返回 null，内核 audit 自动去重）。之后再收集映射快照，
+    // 确保快照覆盖本进程全部可映射的 area。
+    //
+    // sys_prop 先于预热初始化：context 路由与映射快照均依赖其内部
+    // PropertyContext 状态，提前初始化保证后续地址一致。
+    let _ = sys_prop_available();
+    for (key, _) in &filtered {
+        if let Ok(ckey) = std::ffi::CString::new(*key) {
+            unsafe { find_fn(ckey.as_ptr()) };
+        }
     }
-
     let mappings = collect_prop_area_mappings();
 
     // 预初始化 serial area（供所有 update() 调用共享）
@@ -97,8 +108,21 @@ pub fn apply_cow_spoof(
 
     let mut cow_patched = 0usize;
     let mut cow_inserted = 0usize;
+    let mut cow_skipped = 0usize;
 
     for (key, value) in &filtered {
+        // Context 路由目标 area 未映射进本进程（预热后仍未映射 = SELinux
+        // 拒绝，如 build_bootimage_prop 仅 shell/update_engine 可读）⇒
+        // 属性对本进程不可观察：真实值与伪装值对 app 内检测代码均为
+        // unknown，无泄漏面，静默跳过（不进 unfound）。
+        if let Some(path) = context_area_path(key)
+            && !mappings.iter().any(|m| m.path == path)
+        {
+            info!("COW skip '{key}': routed area {path} unmapped in process (unobservable)");
+            cow_skipped += 1;
+            continue;
+        }
+
         match cow_patch_existing(find_fn, key, value, &mappings, serial_pa.as_deref_mut()) {
             Ok(true) => cow_patched += 1,
             Ok(false) => {
@@ -120,7 +144,7 @@ pub fn apply_cow_spoof(
 
     if cow_patched > 0 || cow_inserted > 0 {
         info!(
-            "COW spoof: {cow_patched} patched, {cow_inserted} inserted, {} total",
+            "COW spoof: {cow_patched} patched, {cow_inserted} inserted, {cow_skipped} skipped (unobservable), {} total",
             filtered.len()
         );
     }
@@ -196,7 +220,16 @@ fn cow_patch_existing(
     let pa = serial_pa
         .as_deref_mut()
         .ok_or_else(|| anyhow::anyhow!("serial area not available"))?;
-    area.update(data_off, value, pa)?;
+    if let Err(e) = area.update(data_off, value, pa) {
+        // inline prop 新值超过 PROP_VALUE_MAX（92 字节）时无法原地扩展。
+        // 在 COW 私有副本里 remove + emplace 重建为 long 模式——与 companion
+        // resetprop 的 delete+set fallback 同一手法，但只影响本进程。
+        info!("COW Phase1: update '{key}' failed ({e}), trying remove+emplace");
+        if !area.remove(key)? {
+            anyhow::bail!("remove before long-value emplace failed for '{key}'");
+        }
+        area.emplace(key, value.as_bytes(), 0)?;
+    }
 
     // ── Phase 2: 扫描其他 build area，patch bionic prefix routing 可能命中的区域 ──
     // OnePlus/OPPO 设备上 __system_property_find 返回 build_prop 指针，但 bionic 的
@@ -239,14 +272,26 @@ fn cow_patch_existing(
         match cross_area.find(key) {
             Ok(Some(off)) => {
                 if let Some(pa) = serial_pa.as_deref_mut() {
-                    if cross_area.update(off, value, pa).is_ok() {
+                    let patched = match cross_area.update(off, value, pa) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            // 同 Phase 1：inline prop 超长值 remove+emplace 重建 long 模式
+                            info!(
+                                "COW cross-area: update '{key}' failed in {p} ({e}), trying remove+emplace",
+                                p = mapping.path
+                            );
+                            matches!(
+                                (
+                                    cross_area.remove(key),
+                                    cross_area.emplace(key, value.as_bytes(), 0)
+                                ),
+                                (Ok(true), Ok(()))
+                            )
+                        }
+                    };
+                    if patched {
                         cross_patched += 1;
                         info!("COW cross-area: '{key}' patched in {p}", p = mapping.path);
-                    } else {
-                        info!(
-                            "COW cross-area: '{key}' update failed in {p}",
-                            p = mapping.path
-                        );
                     }
                 }
             }
@@ -466,8 +511,8 @@ fn cow_serial_area(
 
 // ── 新增属性：COW trie 插入 ───────────────────────────────────────────────
 
-/// 常见前缀到同前缀探测属性的映射表。
-/// 用已有属性定位正确的 prop_area，避免靠 trie 前缀猜测。
+/// SIBLING_PROBES：sys_prop 不可用时的降级定位手段，用已有属性按前缀猜测 area。
+/// 不能作为主路径：猜测结果与 property_contexts 的真实路由经常不一致。
 const SIBLING_PROBES: &[(&str, &[&str])] = &[
     (
         "ro.product",
@@ -480,10 +525,50 @@ const SIBLING_PROBES: &[(&str, &[&str])] = &[
     ("ro", &["ro.build.id", "ro.product.model"]),
 ];
 
+/// sys_prop 一次性初始化（幂等，返回是否可用）。
+fn sys_prop_available() -> bool {
+    static OK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OK.get_or_init(|| {
+        if let Err(e) = prop_rs_android::sys_prop::init() {
+            warn!("sys_prop::init failed: {e}, context-routed insert disabled");
+            false
+        } else {
+            true
+        }
+    })
+}
+
+/// 按 property context 路由解析新属性的目标 prop_area 路径。
+///
+/// bionic 的属性读取（`SystemProperties.get` / `__system_property_find`）按
+/// property_contexts 规则将 key 路由到特定 context 的 area，新属性必须插入
+/// 路由目标 area 才能被读到。SIBLING_PROBES 按前缀猜测的 area 与真实路由
+/// 经常不一致（如 `ro.product.odm.*` exact 规则路由到 build_odm_prop 而
+/// sibling 探测返回 build_prop；无匹配规则的 key 落到 default_prop）。
+fn context_area_path(key: &str) -> Option<String> {
+    if !sys_prop_available() {
+        return None;
+    }
+    match prop_rs_android::sys_prop::area_path(key) {
+        Ok(path) => {
+            let path = path.to_string_lossy().into_owned();
+            if path.starts_with("/dev/__properties__/") {
+                Some(path)
+            } else {
+                None
+            }
+        }
+        Err(e) => {
+            info!("context area lookup failed for '{key}': {e}");
+            None
+        }
+    }
+}
+
 /// 尝试在 COW-remapped 的 prop_area 中为不存在的属性插入新 trie 节点。
 ///
-/// 遍历所有 prop_area，用 `MmapPropArea::find` 检查同前缀的已有属性是否在该 area。
-/// 如果找到（说明 bionic 对此前缀读取该 area），就在同一个 area 里 emplace 新属性。
+/// 目标 area 优先按 property context 路由解析（与 bionic 读取路径一致），
+/// 仅插入路由目标 area；sys_prop 不可用时降级为 SIBLING_PROBES 前缀探测。
 fn cow_patch_new(
     key: &str,
     value: &str,
@@ -497,55 +582,68 @@ fn cow_patch_new(
         None => key,
     };
 
-    let probes: &[&str] = SIBLING_PROBES
-        .iter()
-        .find(|(pfx, _)| key_prefix == *pfx || key_prefix.starts_with(&format!("{pfx}.")))
-        .map(|(_, p)| *p)
-        .unwrap_or(&["ro.product.model", "ro.build.id"]);
-
-    // 1. 检查缓存：prefix → area 路径列表
-    let cached_paths = PREFIX_AREA_CACHE.with(|c| c.borrow().get(key_prefix).cloned());
-
-    let target_paths: Vec<String> = if let Some(paths) = cached_paths {
-        // 缓存命中
-        paths
-    } else {
-        // 2. 缓存未命中，遍历 build 相关 area 用 MmapPropArea::find 找包含 sibling 的 area
-        let mut found_paths = Vec::new();
-        for mapping in mappings {
-            if !mapping.path.starts_with("/dev/__properties__/") {
-                continue;
-            }
-            if !mapping.path.contains("build_prop")
-                && !mapping.path.contains("build_odm_prop")
-                && !mapping.path.contains("build_vendor_prop")
-                && !mapping.path.contains("default_prop")
-            {
-                continue;
-            }
-            let size = mapping.end - mapping.start;
-            if size < 128 {
-                continue;
-            }
-            if ensure_prop_area_private(mapping.start as *const u8, mappings).is_err() {
-                continue;
-            }
-            let ptr = mapping.start as *mut u8;
-            let mmap_mut = unsafe { std::mem::transmute::<(*mut u8, usize), MmapMut>((ptr, size)) };
-            let mut area = match MmapPropArea::new(mmap_mut) {
-                Ok(a) => std::mem::ManuallyDrop::new(a),
-                Err(_) => continue,
-            };
-            let has_sibling = probes.iter().any(|p| matches!(area.find(p), Ok(Some(_))));
-            if has_sibling {
-                found_paths.push(mapping.path.clone());
-            }
+    // 1. context 路由优先：只插入 bionic 读取时实际查询的 area。
+    //    路由目标 area 未映射在本进程时放弃插入（交给 companion 兜底），
+    //    避免插错 area 造成“插入成功但读取不可见”。
+    let target_paths: Vec<String> = if let Some(path) = context_area_path(key) {
+        if mappings.iter().any(|m| m.path == path) {
+            vec![path]
+        } else {
+            info!("COW trie: context area {path} for '{key}' not mapped, leaving to companion");
+            return Ok(false);
         }
-        PREFIX_AREA_CACHE.with(|c| {
-            c.borrow_mut()
-                .insert(key_prefix.to_string(), found_paths.clone());
-        });
-        found_paths
+    } else {
+        // 2. sys_prop 不可用的降级路径：检查 prefix → area 路径缓存
+        let cached_paths = PREFIX_AREA_CACHE.with(|c| c.borrow().get(key_prefix).cloned());
+
+        if let Some(paths) = cached_paths {
+            // 缓存命中
+            paths
+        } else {
+            // 3. 缓存未命中，遍历 build 相关 area 用 MmapPropArea::find 找包含 sibling 的 area
+            let probes: &[&str] = SIBLING_PROBES
+                .iter()
+                .find(|(pfx, _)| key_prefix == *pfx || key_prefix.starts_with(&format!("{pfx}.")))
+                .map(|(_, p)| *p)
+                .unwrap_or(&["ro.product.model", "ro.build.id"]);
+
+            let mut found_paths = Vec::new();
+            for mapping in mappings {
+                if !mapping.path.starts_with("/dev/__properties__/") {
+                    continue;
+                }
+                if !mapping.path.contains("build_prop")
+                    && !mapping.path.contains("build_odm_prop")
+                    && !mapping.path.contains("build_vendor_prop")
+                    && !mapping.path.contains("default_prop")
+                {
+                    continue;
+                }
+                let size = mapping.end - mapping.start;
+                if size < 128 {
+                    continue;
+                }
+                if ensure_prop_area_private(mapping.start as *const u8, mappings).is_err() {
+                    continue;
+                }
+                let ptr = mapping.start as *mut u8;
+                let mmap_mut =
+                    unsafe { std::mem::transmute::<(*mut u8, usize), MmapMut>((ptr, size)) };
+                let mut area = match MmapPropArea::new(mmap_mut) {
+                    Ok(a) => std::mem::ManuallyDrop::new(a),
+                    Err(_) => continue,
+                };
+                let has_sibling = probes.iter().any(|p| matches!(area.find(p), Ok(Some(_))));
+                if has_sibling {
+                    found_paths.push(mapping.path.clone());
+                }
+            }
+            PREFIX_AREA_CACHE.with(|c| {
+                c.borrow_mut()
+                    .insert(key_prefix.to_string(), found_paths.clone());
+            });
+            found_paths
+        }
     };
 
     if target_paths.is_empty() {
@@ -580,10 +678,18 @@ fn cow_patch_new(
             Ok(()) => {
                 if let Ok(Some(data_off)) = area.find(key) {
                     let serial = area.read_serial(data_off);
-                    let len_from_serial = serial >> 24;
-                    if len_from_serial as usize == value.len() {
+                    // long prop 的 serial 长度字段是固定 legacy 值
+                    // （LONG_LEGACY_ERROR），只验证 long 标志；inline prop
+                    // 验证长度字段与值一致。
+                    let verified = if serial & PROP_INFO_LONG_FLAG != 0 {
+                        value.len() >= PROP_VALUE_MAX
+                    } else {
+                        (serial >> 24) as usize == value.len()
+                    };
+                    if verified {
                         info!(
-                            "COW trie: inserted '{key}' (serial_ok, len={len_from_serial}) into {}",
+                            "COW trie: inserted '{key}' (serial_ok, len={}) into {}",
+                            value.len(),
                             mapping.path
                         );
                         any_inserted = true;

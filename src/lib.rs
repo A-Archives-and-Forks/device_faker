@@ -16,7 +16,7 @@ use config::Config;
 use cpu_spoof::{apply_cpu_spoof, apply_cpu_spoof_unmount};
 use hooks::hook_build_fields;
 use jni::{EnvUnowned, errors::ThrowRuntimeExAndDefault};
-use log::{LevelFilter, error, info};
+use log::{LevelFilter, error, info, warn};
 use zygisk_api::{
     ZygiskModule,
     api::{V4, ZygiskApi, v4::ZygiskOption},
@@ -192,7 +192,10 @@ impl MyModule {
                 }
             }
         } else {
-            // 默认路径：COW 处理，companion 只处理未找到属性和 __DELETE__
+            // 严格 COW：COW 无法处理的属性不再降级为全局 resetprop——
+            // 自动 fallback 会修改全局属性（getprop/其他 app 可见），破坏
+            // COW 模式的 per-process 隔离承诺。需要全局生效（getprop 子进程
+            // 可见、__DELETE__ 删除属性）时显式开启 companion_resetprop。
             let unfound_props = match cow_props::apply_cow_spoof(&prop_map) {
                 Ok(unfound) => unfound,
                 Err(e) => {
@@ -201,23 +204,32 @@ impl MyModule {
                 }
             };
 
+            for (key, value) in &unfound_props {
+                warn!(
+                    "Strict COW cannot apply '{key}' ({} bytes) for {package_name}; \
+                     enable companion_resetprop for global fallback",
+                    value.len()
+                );
+            }
+
             let delete_props = Config::build_delete_props_list(&merged);
-            if !unfound_props.is_empty() || !delete_props.is_empty() || merged.dpi.is_some() {
-                let unfound_map: HashMap<String, String> = unfound_props.into_iter().collect();
-                if let Err(e) = spoof_system_props_via_companion(
-                    api,
-                    &unfound_map,
-                    &delete_props,
-                    &package_name,
-                    merged.dpi,
-                ) {
-                    error!("Companion resetprop failed: {e:?}");
+            for key in &delete_props {
+                warn!(
+                    "Strict COW cannot delete '{key}' for {package_name}; \
+                     enable companion_resetprop to use __DELETE__"
+                );
+            }
+
+            // dpi 与属性伪装无关（companion 经 wm density 修改全局 settings），
+            // 配置了仍走 companion。
+            if merged.dpi.is_some() {
+                let empty: HashMap<String, String> = HashMap::new();
+                if let Err(e) =
+                    spoof_system_props_via_companion(api, &empty, &[], &package_name, merged.dpi)
+                {
+                    error!("Companion dpi failed: {e:?}");
                 } else if config.debug {
-                    info!(
-                        "Companion resetprop: {} new + {} delete for {package_name}",
-                        unfound_map.len(),
-                        delete_props.len()
-                    );
+                    info!("Companion dpi applied for {package_name}");
                 }
             }
         }

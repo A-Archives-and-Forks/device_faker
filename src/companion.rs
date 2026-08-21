@@ -854,7 +854,13 @@ fn resetprop_delete(key: &str) -> anyhow::Result<()> {
 
     match rp.delete(key) {
         Ok(true) => Ok(()),
-        Ok(false) => anyhow::bail!("resetprop delete failed for {key}: property not found"),
+        // 属性族展开后，删除列表包含设备上可能不存在的分区副本
+        // （如旧设备没有 system_dlkm/vendor_dlkm 构建 props）；
+        // 本来就不存在的属性视为已删除，避免整个 Apply 会话失败回滚。
+        Ok(false) => {
+            info!("resetprop delete: '{key}' not present, treating as deleted");
+            Ok(())
+        }
         Err(_) => anyhow::bail!("resetprop delete failed for {key}"),
     }
 }
