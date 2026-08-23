@@ -33,6 +33,7 @@ declare module 'vue' {
     ElOption: typeof import('element-plus/es')['ElOption']
     ElSelect: typeof import('element-plus/es')['ElSelect']
     ElSwitch: typeof import('element-plus/es')['ElSwitch']
+    FollowDialog: typeof import('./src/components/status/FollowDialog.vue')['default']
     OnlineTemplateLibraryView: typeof import('./src/components/OnlineTemplateLibraryView.vue')['default']
     OnlineTemplateVirtualList: typeof import('./src/components/OnlineTemplateVirtualList.vue')['default']
     TemplateCard: typeof import('./src/components/templates/TemplateCard.vue')['default']
@@ -40,5 +41,6 @@ declare module 'vue' {
     TemplateHeader: typeof import('./src/components/templates/TemplateHeader.vue')['default']
     TemplateList: typeof import('./src/components/templates/TemplateList.vue')['default']
     TemplateTransferDialog: typeof import('./src/components/templates/TemplateTransferDialog.vue')['default']
+    TranslatorsDialog: typeof import('./src/components/status/TranslatorsDialog.vue')['default']
   }
 }

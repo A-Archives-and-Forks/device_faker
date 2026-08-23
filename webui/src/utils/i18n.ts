@@ -1195,6 +1195,14 @@ function getNestedValue(obj: unknown, path: string): string {
   }, obj) as string
 }
 
+const translationCache = new Map<string, string>()
+
+function resolveMessage(localeKey: Locale, path: string): string | null {
+  const value = getNestedValue(messages[localeKey], path)
+  // 与旧实现一致:空字符串/非字符串视为缺失
+  return typeof value === 'string' && value ? value : null
+}
+
 export function useI18n() {
   const settingsStore = useSettingsStore()
 
@@ -1211,21 +1219,38 @@ export function useI18n() {
   })
 
   function t(path: string, args?: Record<string, string | number>): string {
-    const currentMessages = messages[locale.value]
-    let value = getNestedValue(currentMessages, path)
+    const currentLocale = locale.value
 
-    if (!value) {
+    // 无插值的查询占绝大多数(每次渲染都会重复),按 locale+path 缓存,
+    // 避免列表渲染时每张卡片反复做 path.split + reduce 对象树遍历。
+    if (!args) {
+      const cacheKey = `${currentLocale}\0${path}`
+      const cached = translationCache.get(cacheKey)
+      if (cached !== undefined) {
+        return cached
+      }
+
+      const resolved = resolveMessage(currentLocale, path)
+      if (resolved === null) {
+        console.warn(`Translation missing for key: ${path}`)
+        return path
+      }
+
+      translationCache.set(cacheKey, resolved)
+      return resolved
+    }
+
+    const value = resolveMessage(currentLocale, path)
+    if (value === null) {
       console.warn(`Translation missing for key: ${path}`)
       return path
     }
 
-    if (args) {
-      Object.entries(args).forEach(([key, val]) => {
-        value = value.replace(`{${key}}`, String(val))
-      })
+    let result = value
+    for (const [key, val] of Object.entries(args)) {
+      result = result.replace(`{${key}}`, String(val))
     }
-
-    return value
+    return result
   }
 
   return {

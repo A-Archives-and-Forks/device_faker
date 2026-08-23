@@ -10,7 +10,7 @@
 
     <template v-else>
       <AppFilters
-        v-model:search-query="searchQuery"
+        v-model:search-query="searchInput"
         v-model:filter-type="filterType"
         v-model:show-system-apps="showSystemApps"
         :total-count="visibleApps.length"
@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppFilters from '../components/apps/AppFilters.vue'
 import AppList from '../components/apps/AppList.vue'
 import AppsPageSkeleton from '../components/apps/AppsPageSkeleton.vue'
@@ -44,7 +44,34 @@ import { normalizePackageName, parsePackageUser } from '../utils/package'
 import type { InstalledApp } from '../types'
 
 type FilterType = 'all' | 'configured'
-type AppListItem = InstalledApp & { configured: boolean }
+type AppListItem = InstalledApp & {
+  configured: boolean
+  /** 预计算的小写包名/应用名,避免每次键入搜索词都对全量列表做 toLowerCase */
+  pkgLower: string
+  nameLower: string
+  /**
+   * 预计算的排序 key:归一化包名 \0 userId(补零) \0 已安装优先。
+   * 排序退化为单次字符串比较,不再在比较器里跑正则(normalizePackageName)。
+   */
+  sortKey: string
+}
+
+function buildSortKey(packageName: string, installed: boolean): string {
+  const { base, userId } = parsePackageUser(packageName)
+  return `${base}\u0000${String(userId).padStart(8, '0')}\u0000${installed ? '0' : '1'}`
+}
+
+function buildListEntry(app: InstalledApp, configured: boolean, installed: boolean): AppListItem {
+  const appName = app.appName || app.packageName
+  return {
+    ...app,
+    appName,
+    configured,
+    pkgLower: app.packageName.toLowerCase(),
+    nameLower: appName.toLowerCase(),
+    sortKey: buildSortKey(app.packageName, installed),
+  }
+}
 
 const AppConfigDialog = defineAsyncComponent(() => import('../components/apps/AppConfigDialog.vue'))
 
@@ -53,7 +80,28 @@ const appsStore = useAppsStore()
 const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
-const searchQuery = ref('')
+const searchInput = ref('')
+const debouncedSearch = ref('')
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+// 搜索防抖:每个键入字符只更新原始输入,150ms 静默期后才触发全量过滤+排序
+watch(searchInput, (value) => {
+  if (searchDebounceTimer !== null) {
+    clearTimeout(searchDebounceTimer)
+  }
+  searchDebounceTimer = setTimeout(() => {
+    searchDebounceTimer = null
+    debouncedSearch.value = value
+  }, 150)
+})
+
+onUnmounted(() => {
+  if (searchDebounceTimer !== null) {
+    clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = null
+  }
+})
+
 const filterType = ref<FilterType>('all')
 const configDialogVisible = ref(false)
 const currentApp = ref<InstalledApp | null>(null)
@@ -163,11 +211,7 @@ const allApps = computed<AppListItem[]>(() => {
     const normalized = normalizePackageName(app.packageName)
     if (packageIndex.has(app.packageName)) continue
 
-    const entry = {
-      ...app,
-      installed: app.installed ?? true,
-      configured: isConfiguredPackage(app.packageName),
-    }
+    const entry = buildListEntry(app, isConfiguredPackage(app.packageName), app.installed ?? true)
 
     const idx = result.length
     result.push(entry)
@@ -186,16 +230,20 @@ const allApps = computed<AppListItem[]>(() => {
     const existingIdx = normalizedIndex.get(normalized)
     const existingApp = existingIdx !== undefined ? result[existingIdx] : undefined
     const resolvedInfo = getResolvedPackageInfo(app.packageName)
+    const installed = isInstalledPackage(app.packageName)
 
-    const entry = {
+    const entry: AppListItem = {
       packageName: app.packageName,
       appName: resolvedInfo?.appName || existingApp?.appName || app.packageName,
       icon: resolvedInfo?.icon || existingApp?.icon || '',
       versionName: resolvedInfo?.versionName || existingApp?.versionName || '',
       versionCode: resolvedInfo?.versionCode ?? existingApp?.versionCode ?? 0,
-      installed: isInstalledPackage(app.packageName),
+      installed,
       isSystem: existingApp?.isSystem ?? resolvedInfo?.isSystem ?? app.isSystem,
       configured: true,
+      pkgLower: app.packageName.toLowerCase(),
+      nameLower: (resolvedInfo?.appName || existingApp?.appName || app.packageName).toLowerCase(),
+      sortKey: buildSortKey(app.packageName, installed),
     }
 
     const idx = result.length
@@ -218,38 +266,22 @@ const configuredCount = computed(() => visibleApps.value.filter((app) => app.con
 const filteredApps = computed(() => {
   let apps = visibleApps.value
 
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    apps = apps.filter(
-      (app) => app.packageName.toLowerCase().includes(q) || app.appName.toLowerCase().includes(q)
-    )
+  const q = debouncedSearch.value.toLowerCase()
+  if (q) {
+    // 使用预计算的小写字段,键入时不再对全量列表做 toLowerCase
+    apps = apps.filter((app) => app.pkgLower.includes(q) || app.nameLower.includes(q))
   }
 
   if (filterType.value === 'configured') {
     apps = apps.filter((app) => app.configured)
   }
 
-  return apps.slice().sort((a, b) => {
-    // 主键：归一化包名，让同包名（含 @userId 多用户变体）聚在一起
-    const aNorm = normalizePackageName(a.packageName)
-    const bNorm = normalizePackageName(b.packageName)
-    if (aNorm !== bNorm) return aNorm < bNorm ? -1 : 1
-
-    // 同包名：user0 优先，非零用户按 userId 升序
-    const aUser = parsePackageUser(a.packageName).userId
-    const bUser = parsePackageUser(b.packageName).userId
-    if (aUser !== bUser) return aUser - bUser
-
-    // 同包名同用户：已安装优先
-    const aInstalled = a.installed !== false
-    const bInstalled = b.installed !== false
-    if (aInstalled === bInstalled) return 0
-    return aInstalled ? -1 : 1
-  })
+  // 预计算 sortKey 后排序退化为纯字符串比较(归一化包名 → userId → 已安装优先)
+  return apps.slice().sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
 })
 
 const emptyText = computed(() => {
-  if (searchQuery.value) return t('apps.empty.search')
+  if (debouncedSearch.value) return t('apps.empty.search')
   if (filterType.value === 'configured') return t('apps.empty.configured')
   return t('apps.empty.all')
 })
