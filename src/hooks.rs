@@ -57,6 +57,12 @@ pub fn hook_build_fields(
                 .map_err(|_e| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?;
         }
 
+        // BOARD 字段
+        if let Some(board) = field_str(&merged_config.board) {
+            set_build_field(jenv, &build_class, jni_str!("BOARD"), board)
+                .map_err(|_e| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?;
+        }
+
         if let Some(fingerprint) = field_str(&merged_config.fingerprint) {
             set_build_field(jenv, &build_class, jni_str!("FINGERPRINT"), fingerprint)
                 .map_err(|_e| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?;

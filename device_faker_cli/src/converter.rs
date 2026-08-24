@@ -79,6 +79,7 @@ const SDK_INT_KEYS: &[&str] = &[
     "ro.product.build.version.sdk",
 ];
 const HARDWARE_KEYS: &[&str] = &["ro.hardware"];
+const BOARD_KEYS: &[&str] = &["ro.product.board"];
 
 #[derive(Debug, Serialize)]
 struct OutputConfig {
@@ -105,6 +106,8 @@ struct DeviceTemplateToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     hardware: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    board: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     build_id: Option<String>,
@@ -126,6 +129,7 @@ impl DeviceTemplateToml {
             || self.device.is_some()
             || self.product.is_some()
             || self.hardware.is_some()
+            || self.board.is_some()
             || self.fingerprint.is_some()
             || self.build_id.is_some()
             || self.characteristics.is_some()
@@ -210,6 +214,7 @@ fn build_template(properties: &BTreeMap<String, String>) -> DeviceTemplateToml {
         device,
         product: read_non_empty_property(properties, PRODUCT_KEYS),
         hardware: read_non_empty_property(properties, HARDWARE_KEYS),
+        board: read_non_empty_property(properties, BOARD_KEYS),
         fingerprint: read_non_empty_property(properties, FINGERPRINT_KEYS),
         build_id: read_non_empty_property(properties, BUILD_ID_KEYS),
         characteristics: read_non_empty_property(properties, CHARACTERISTICS_KEYS),
@@ -417,6 +422,7 @@ mod tests {
             ro.product.name=haotian
             ro.product.device=haotian
             ro.product.product=haotian
+            ro.product.board=kalama
             ro.build.fingerprint=Xiaomi/haotian/haotian:15/AP4A.250205.002/123456:user/release-keys
             ro.build.id=AP4A.250205.002
             ro.build.characteristics=nosdcard
@@ -433,6 +439,7 @@ mod tests {
         assert_eq!(template.name.as_deref(), Some("haotian"));
         assert_eq!(template.device.as_deref(), Some("haotian"));
         assert_eq!(template.product.as_deref(), Some("haotian"));
+        assert_eq!(template.board.as_deref(), Some("kalama"));
         assert_eq!(
             template.fingerprint.as_deref(),
             Some("Xiaomi/haotian/haotian:15/AP4A.250205.002/123456:user/release-keys")

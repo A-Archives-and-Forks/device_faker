@@ -76,6 +76,9 @@ function normalizeDeviceInfoFields(source: UnknownRecord): Partial<DeviceInfo> {
   const hardware = asOptionalString(source.hardware)
   if (hardware !== undefined) normalized.hardware = hardware
 
+  const board = asOptionalString(source.board)
+  if (board !== undefined) normalized.board = board
+
   const name = asOptionalString(source.name)
   if (name !== undefined) normalized.name = name
 

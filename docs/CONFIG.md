@@ -130,6 +130,7 @@ manufacturer = "Samsung"
 | `device` | `Build.DEVICE` | `ro.product.device` 及分区变体 | 代号 (如: xuanyuan)；未设置时自动使用 `name` 的值 |
 | `product` | `Build.PRODUCT` | —（无系统属性） | 代号 (如: xuanyuan)，仅覆写 Build 字段 |
 | `hardware` | `Build.HARDWARE` | `ro.hardware` | 硬件名 (如: qcom)，无分区变体 |
+| `board` | `Build.BOARD` | `ro.product.board` | 主板名 (如: kalama)，无分区变体 |
 | `fingerprint` | `Build.FINGERPRINT` | `ro.build.fingerprint` | 指纹 |
 | `build_id` | `Build.ID` | `ro.build.id`、`ro.system.build.id`、`ro.vendor.build.id`、`ro.product.build.id` | Build ID (如: UKQ1.230917.001) |
 | `characteristics` | —（仅属性） | `ro.build.characteristics` | 特性 (如: tablet) |

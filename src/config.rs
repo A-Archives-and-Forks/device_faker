@@ -205,6 +205,8 @@ pub struct DeviceTemplate {
     #[serde(default)]
     pub hardware: Option<String>,
     #[serde(default)]
+    pub board: Option<String>,
+    #[serde(default)]
     pub fingerprint: Option<String>,
     #[serde(default)]
     pub build_id: Option<String>,
@@ -260,6 +262,8 @@ pub struct AppConfig {
     pub product: Option<String>,
     #[serde(default)]
     pub hardware: Option<String>,
+    #[serde(default)]
+    pub board: Option<String>,
     #[serde(default)]
     pub fingerprint: Option<String>,
     #[serde(default)]
@@ -351,6 +355,7 @@ impl Config {
                 device: app.device.clone(),
                 product: app.product.clone(),
                 hardware: app.hardware.clone(),
+                board: app.board.clone(),
                 fingerprint: app.fingerprint.clone(),
                 build_id: app.build_id.clone(),
                 characteristics: app.characteristics.clone(),
@@ -386,6 +391,7 @@ impl Config {
                 device: template.device.clone(),
                 product: template.product.clone(),
                 hardware: template.hardware.clone(),
+                board: template.board.clone(),
                 fingerprint: template.fingerprint.clone(),
                 build_id: template.build_id.clone(),
                 characteristics: template.characteristics.clone(),
@@ -452,6 +458,13 @@ impl Config {
 
         if let Some(hardware) = field_value(&merged.hardware) {
             map.insert("ro.hardware".to_string(), hardware);
+        }
+
+        // Build.BOARD 的属性来源是 ro.product.board（单一属性，AOSP 不导出分区
+        // 副本——真实设备上只有这一个 key，插入不存在的分区变体会制造可被枚举
+        // 检测的幽灵属性，故与 ro.hardware 同形态、不做整族展开）。
+        if let Some(board) = field_value(&merged.board) {
+            map.insert("ro.product.board".to_string(), board);
         }
 
         if let Some(fingerprint) = field_value(&merged.fingerprint) {
@@ -554,6 +567,9 @@ impl Config {
         if merged.hardware.as_ref().is_some_and(|s| s == "__DELETE__") {
             delete_props.push("ro.hardware".to_string());
         }
+        if merged.board.as_ref().is_some_and(|s| s == "__DELETE__") {
+            delete_props.push("ro.product.board".to_string());
+        }
 
         if let Some(custom_props) = &merged.custom_props {
             for (key, value) in custom_props {
@@ -578,6 +594,7 @@ pub struct MergedAppConfig {
     pub device: Option<String>,
     pub product: Option<String>,
     pub hardware: Option<String>,
+    pub board: Option<String>,
     pub fingerprint: Option<String>,
     pub build_id: Option<String>,
     pub characteristics: Option<String>,

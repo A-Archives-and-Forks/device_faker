@@ -130,6 +130,7 @@ The following fields can be used in templates or `[[apps]]`. Each field drives b
 | `device` | `Build.DEVICE` | `ro.product.device` + partition variants | Codename (e.g. xuanyuan); falls back to the value of `name` when unset |
 | `product` | `Build.PRODUCT` | — (no system property) | Codename (e.g. xuanyuan); Build field only |
 | `hardware` | `Build.HARDWARE` | `ro.hardware` | Hardware name (e.g. qcom); no partition variants |
+| `board` | `Build.BOARD` | `ro.product.board` | Board name (e.g. kalama); no partition variants |
 | `fingerprint` | `Build.FINGERPRINT` | `ro.build.fingerprint` | Fingerprint |
 | `build_id` | `Build.ID` | `ro.build.id`, `ro.system.build.id`, `ro.vendor.build.id`, `ro.product.build.id` | Build ID (e.g. UKQ1.230917.001) |
 | `characteristics` | — (properties only) | `ro.build.characteristics` | Characteristics (e.g. tablet) |

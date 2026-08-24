@@ -91,6 +91,7 @@ const filteredTemplates = computed(() => {
       template.device || '',
       template.manufacturer || '',
       template.product || '',
+      template.board || '',
     ]
 
     const matches = searchFields.some((field) => field.toLowerCase().includes(query))
