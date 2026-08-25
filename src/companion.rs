@@ -13,7 +13,7 @@ use prop_rs_android::{resetprop::ResetProp, sys_prop};
 use serde::{Deserialize, Serialize};
 use zygisk_api::api::{V4, ZygiskApi};
 
-use crate::config::{DPI_MAX, DPI_MIN};
+use crate::config::{DPI_MAX, DPI_MIN, RESTORE_DEBOUNCE_MS};
 
 // ── Companion 侧激活会话跟踪 ─────────────────────────────────────────────────
 //
@@ -567,7 +567,9 @@ fn spawn_process_state_watcher(pid: u32, action: WatcherAction) -> anyhow::Resul
                 libc::_exit(0);
             }
             child_pid => {
-                info!("Spawned {spawn_label} pid={child_pid} for app pid={pid}");
+                info!(
+                    "Spawned {spawn_label} pid={child_pid} for app pid={pid} (bg_debounce={RESTORE_DEBOUNCE_MS}ms)"
+                );
                 Ok(child_pid)
             }
         }
@@ -590,9 +592,51 @@ fn watch_process_state(pid: u32, action: WatcherAction) -> anyhow::Result<()> {
     watch_via_cgroup_polling(pid, &action)
 }
 
+/// 切入 init 的 mount namespace。
+///
+/// watcher 子进程 fork 自 companion，其 procfs 实例在部分设备上与 lmkd/
+/// system_server 写入的实例不同（独立 superblock），inotify 收不到事件。
+/// init 是所有写入方的祖先：对齐后 watch 与写入落在同一 inode 上。
+/// nsfs 句柄跨实例共享——从本实例打开 /proc/1/ns/mnt 拿到的即 init 命名空间
+/// 的真句柄。已在自身 ns 时 setns 幂等成功（健康设备直接进入纯事件模式）。
+fn setns_to_init_mnt_ns() -> anyhow::Result<()> {
+    let path = b"/proc/1/ns/mnt\0";
+    let fd = unsafe { libc::open(path.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
+    if fd < 0 {
+        anyhow::bail!(
+            "open /proc/1/ns/mnt failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    let rc = unsafe { libc::setns(fd, libc::CLONE_NEWNS) };
+    let open_err = std::io::Error::last_os_error();
+    unsafe { libc::close(fd) };
+    if rc != 0 {
+        anyhow::bail!("setns(CLONE_NEWNS) failed: {open_err}");
+    }
+    Ok(())
+}
+
 fn watch_via_inotify(pid: u32, action: &WatcherAction) -> anyhow::Result<()> {
     const BACKGROUND_THRESHOLD: i32 = 200;
-    const BACKGROUND_DEBOUNCE: Duration = Duration::from_secs(2);
+    let background_debounce = Duration::from_millis(RESTORE_DEBOUNCE_MS);
+    /// 兜底轮询间隔（仅 setns 失败时使用）。部分设备的 mount namespace 中
+    /// companion 挂载的是独立的 procfs superblock（实测 evergo + Android 16：
+    /// watcher 与 lmkd 看到的 /proc/<pid>/oom_score_adj 是不同 inode），
+    /// IN_MODIFY 事件永远无法送达。setns 到 init 成功后与写入方共享同一实例，
+    /// epoll_wait 可无限阻塞纯事件驱动；失败时保留 200ms 轮询兜底
+    /// （procfs 内容读取跨实例一致，仅事件投递受影响）。
+    const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+    // 先尝试切入 init 的 mount namespace：lmkd/system_server 都是 init 后代，
+    // 它们写的就是 init 实例的 procfs；对齐后 inotify 事件必然可达。
+    let event_pure = match setns_to_init_mnt_ns() {
+        Ok(()) => true,
+        Err(e) => {
+            warn!("setns to init mnt ns failed ({e}); keeping {POLL_INTERVAL:?} polling fallback");
+            false
+        }
+    };
 
     let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0u32) };
     if pidfd < 0 {
@@ -646,30 +690,35 @@ fn watch_via_inotify(pid: u32, action: &WatcherAction) -> anyhow::Result<()> {
     let mut background_since: Option<Instant> = None;
     let mut events = [libc::epoll_event { events: 0, u64: 0 }; 2];
 
-    info!("{label}: inotify monitoring oom_score_adj for pid {pid}");
+    info!(
+        "{label}: inotify monitoring oom_score_adj for pid {pid} ({})",
+        if event_pure {
+            "pure event, init ns aligned"
+        } else {
+            "poll fallback"
+        }
+    );
 
     loop {
-        let timeout = if let Some(bg_start) = background_since {
-            BACKGROUND_DEBOUNCE
-                .checked_sub(bg_start.elapsed())
-                .unwrap_or(Duration::ZERO)
-                .as_millis() as i32
-        } else {
-            -1
+        let timeout = match background_since {
+            Some(bg_start) => {
+                // 防抖窗口内：睡到截止时刻即可，事件到达会提前唤醒
+                let remaining = background_debounce
+                    .checked_sub(bg_start.elapsed())
+                    .unwrap_or(Duration::ZERO);
+                remaining.as_millis() as i32
+            }
+            None => {
+                if event_pure {
+                    // 纯事件驱动：无限阻塞，靠 IN_MODIFY / pidfd 唤醒
+                    -1
+                } else {
+                    POLL_INTERVAL.as_millis() as i32
+                }
+            }
         };
 
         let nfds = unsafe { libc::epoll_wait(efd, events.as_mut_ptr(), 2, timeout) };
-
-        if let Some(bg_start) = background_since
-            && bg_start.elapsed() >= BACKGROUND_DEBOUNCE
-        {
-            if is_applied {
-                action.restore()?;
-                is_applied = false;
-                info!("{label} restored session for pid {pid}");
-            }
-            background_since = None;
-        }
 
         if nfds < 0 {
             let error = std::io::Error::last_os_error();
@@ -683,45 +732,39 @@ fn watch_via_inotify(pid: u32, action: &WatcherAction) -> anyhow::Result<()> {
             break;
         }
 
-        if nfds == 0 {
-            continue;
+        if nfds > 0 {
+            let process_exited = events
+                .iter()
+                .take(nfds as usize)
+                .any(|event| event.u64 == pidfd as u64);
+            if process_exited {
+                if is_applied {
+                    action.restore()?;
+                }
+                info!("{label}: app pid {pid} exited (pidfd event)");
+                break;
+            }
         }
 
-        let process_exited = events
-            .iter()
-            .take(nfds as usize)
-            .any(|event| event.u64 == pidfd as u64);
-        if process_exited {
+        // 统一状态机 tick：无论唤醒来自 inotify 事件还是轮询超时，都读当前值。
+        // procfs 内容跨 mount namespace 一致，轮询不依赖 fsnotify 投递。
+        let oom_value = read_oom_score_adj(pid);
+        if oom_value >= BACKGROUND_THRESHOLD {
             if is_applied {
-                action.restore()?;
-            }
-            info!("{label}: app pid {pid} exited (pidfd event)");
-            break;
-        }
-
-        for event in events.iter().take(nfds as usize) {
-            if event.u64 != ifd as u64 {
-                continue;
-            }
-
-            let mut buf = [0u8; 512];
-            let _ = unsafe { libc::read(ifd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-            let oom_value = read_oom_score_adj(pid);
-            if oom_value >= BACKGROUND_THRESHOLD {
                 let bg_start = *background_since.get_or_insert_with(Instant::now);
-                if is_applied && bg_start.elapsed() >= BACKGROUND_DEBOUNCE {
+                if bg_start.elapsed() >= background_debounce {
                     action.restore()?;
                     is_applied = false;
                     background_since = None;
                     info!("{label} restored session for pid {pid} (oom={oom_value})");
                 }
-            } else {
-                background_since = None;
-                if !is_applied {
-                    action.apply()?;
-                    is_applied = true;
-                    info!("{label} re-applied session for pid {pid} (oom={oom_value})");
-                }
+            }
+        } else {
+            background_since = None;
+            if !is_applied {
+                action.apply()?;
+                is_applied = true;
+                info!("{label} re-applied session for pid {pid} (oom={oom_value})");
             }
         }
     }
@@ -749,7 +792,7 @@ fn read_oom_score_adj(pid: u32) -> i32 {
 /// 轮询回退方案：/proc/<pid>/cgroup 检查 top-app（与原实现相同）。
 fn watch_via_cgroup_polling(pid: u32, action: &WatcherAction) -> anyhow::Result<()> {
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
-    const BACKGROUND_DEBOUNCE: Duration = Duration::from_secs(2);
+    let background_debounce = Duration::from_millis(RESTORE_DEBOUNCE_MS);
 
     let proc_path = format!("/proc/{pid}");
     let label = action.label();
@@ -775,7 +818,7 @@ fn watch_via_cgroup_polling(pid: u32, action: &WatcherAction) -> anyhow::Result<
             }
         } else {
             let bg_start = background_since.get_or_insert_with(Instant::now);
-            if is_applied && bg_start.elapsed() >= BACKGROUND_DEBOUNCE {
+            if is_applied && bg_start.elapsed() >= background_debounce {
                 action.restore()?;
                 is_applied = false;
                 background_since = None;

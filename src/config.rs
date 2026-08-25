@@ -10,6 +10,14 @@ fn valid_dpi(value: Option<u32>) -> Option<u32> {
     value.filter(|dpi| (DPI_MIN..=DPI_MAX).contains(dpi))
 }
 
+/// 切后台恢复全局状态（DPI / companion 属性）的固定防抖时长。
+///
+/// 防抖只作用于「前台 → 后台」方向，用于滤除 oom_score_adj 的瞬时抖动
+/// （真机实测存在 <150ms 的前后台翻转）；「后台 → 前台」重应用方向无防抖。
+/// 旧默认 2s 会让切换到的其它应用以伪装密度渲染 2~4s（AMS 更新 adj 滞后 +
+/// 防抖 + wm density 执行），用户可感知为"DPI 没有及时恢复"，故缩短为 500ms。
+pub const RESTORE_DEBOUNCE_MS: u64 = 500;
+
 /// `ro.product.*` 会按属性来源顺序读取不同分区的副本。模板字段必须同步这些副本，
 /// 否则检测程序可以从另一个分区读回真机值。
 const PRODUCT_PARTITION_PREFIXES: &[&str] = &[
