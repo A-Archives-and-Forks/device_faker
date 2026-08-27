@@ -5,6 +5,8 @@ mod config;
 mod cow_props;
 mod cpu_spoof;
 #[cfg(target_os = "android")]
+mod fg_observer;
+#[cfg(target_os = "android")]
 mod file_logger;
 mod hooks;
 
