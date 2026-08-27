@@ -30,12 +30,16 @@ struct PropRange {
 }
 
 thread_local! {
+    // 已用 const {} 包裹，此 nightly 的 lint 仍误报（bug），allow 压制。
+    #[allow(clippy::missing_const_for_thread_local)]
     static COW_RANGES: RefCell<Vec<PropRange>> = const { RefCell::new(Vec::new()) };
 }
 
 // ── 前缀 → area 路径缓存（per-thread，首次遍历后记住正确的 area）──────────
 
 thread_local! {
+    // HashMap::new 在此 toolchain 上非 const fn，无法按 clippy 建议包成 const。
+    #[allow(clippy::missing_const_for_thread_local)]
     static PREFIX_AREA_CACHE: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
 }
 

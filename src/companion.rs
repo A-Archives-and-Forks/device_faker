@@ -1,9 +1,9 @@
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
@@ -13,87 +13,290 @@ use prop_rs_android::{resetprop::ResetProp, sys_prop};
 use serde::{Deserialize, Serialize};
 use zygisk_api::api::{V4, ZygiskApi};
 
-use crate::config::{DPI_MAX, DPI_MIN, RESTORE_DEBOUNCE_MS};
+use crate::config::{DPI_MAX, DPI_MIN};
 
-// ── Companion 侧激活会话跟踪 ─────────────────────────────────────────────────
+// ── 前台门控会话（D1/D4）────────────────────────────────────────────────────
 //
-// companion 进程持续运行，static 状态可靠（不受 Zygisk 模块 DlClose 影响）。
-// 每个 Apply 请求会先恢复上一个会话的备份，确保多应用并发时不会互相污染。
+// 前后台真值由常驻守护进程 device_faker_topd 提供（unix socket 行协议
+// `FG <package>`），companion 是唯一订阅者。Apply 只采样备份并登记未激活
+// 会话，**不急切应用任何全局态**；`FG == 包名` 才中央激活属性批量与密度，
+// `FG != 包名` 恢复。topd 不可用时一律不做全局变更（D2 宁缺毋滥）。
 
-static ACTIVE_SESSION: Mutex<Option<ActiveSession>> = Mutex::new(None);
+static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 
-struct ActiveSession {
+/// 单个前台门控会话：Apply 登记，FG 事件驱动激活/恢复。
+struct Session {
     package: String,
-    pid: u32,
-    backups: HashMap<String, String>,
-    density: Option<u32>,
-    original_density: Option<u32>,
-    watcher_pid: i32,
+    app_pid: u32,
+    /// 本次伪装规格（来自 Apply 请求）
+    spec: SessionSpec,
+    /// Apply 时采样的原始值备份（此刻全局处于干净状态）
+    originals: Originals,
+    /// 是否已随 FG 事件中央激活
+    activated: bool,
 }
 
-/// Operation-specific part of a process-scoped session watcher.
-///
-/// The process lifecycle (foreground/background transitions and process exit)
-/// is shared by resetprop and DPI. Only applying/restoring the session state
-/// differs, so keep that difference behind this enum instead of duplicating
-/// the watcher event loop.
-#[derive(Clone)]
-struct WatcherAction {
+struct SessionSpec {
     props: HashMap<String, String>,
     delete_props: Vec<String>,
-    backups: Vec<PropBackup>,
     density: Option<u32>,
-    original_density: Option<u32>,
 }
 
-impl WatcherAction {
-    fn spawn_label(&self) -> &'static str {
-        if self.density.is_some() {
-            "DPI restore watcher"
-        } else {
-            "restore watcher"
-        }
-    }
+struct Originals {
+    prop_backups: HashMap<String, String>,
+    orig_density: Option<u32>,
+}
 
-    fn label(&self) -> &'static str {
-        if self.density.is_some() {
-            "DPI watcher"
-        } else {
-            "restore watcher"
-        }
-    }
+// ── 前台源（UidObserver 优先，0.5s 轮询兜底）─────────────────────────────────
+//
+// topd 订阅（下方 `topd 订阅客户端` 一节）在 observer 实测期间暂不启用：
+// 首次 Apply 走 `spawn_fg_observer_once`，事件驱动（PROCESS_STATE_TOP）或
+// 轮询兜底喂 `handle_fg_event`。observer 验证通过后再决定 topd 去留。
 
-    fn apply(&self) -> anyhow::Result<()> {
-        if !self.props.is_empty() || !self.delete_props.is_empty() {
-            apply_props_batch(&self.props, &self.delete_props)?;
-        }
-        if let Some(density) = self.density {
-            set_density(Some(density))?;
-        }
-        Ok(())
-    }
+static FG_OBSERVER_STARTED: OnceLock<()> = OnceLock::new();
 
-    fn restore(&self) -> anyhow::Result<()> {
-        if self.density.is_some() {
-            restore_density(self.original_density)?;
-        }
-        if self.backups.is_empty() {
-            Ok(())
-        } else {
-            restore_props_batch(&self.backups)
-        }
+/// 首次 Apply 时惰性启动前台源线程（UidObserver → 轮询兜底）。
+fn spawn_fg_observer_once() {
+    FG_OBSERVER_STARTED.get_or_init(|| {
+        let sink: crate::fg_observer::FgSink =
+            std::sync::Arc::new(|pkg: &str| handle_fg_event(pkg));
+        crate::fg_observer::spawn_fg_source(sink);
+    });
+}
+
+/// 前台源（observer 或轮询）是否已就绪。
+fn fg_ready() -> bool {
+    crate::fg_observer::FG_READY.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// D2 限频 WARN：前台源未就绪时属性/密度一律不应用。
+fn warn_fg_unavailable() {
+    static LAST: OnceLock<Mutex<Instant>> = OnceLock::new();
+    let due = LAST
+        .get_or_init(|| Mutex::new(Instant::now() - TOPD_WARN_INTERVAL))
+        .lock()
+        .map(|mut last| {
+            let notify = last.elapsed() >= TOPD_WARN_INTERVAL;
+            if notify {
+                *last = Instant::now();
+            }
+            notify
+        })
+        .unwrap_or(false);
+    if due {
+        warn!(
+            "foreground source not ready; property/density gating degraded (nothing will be applied)"
+        );
     }
 }
 
-/// 收割已退出的 watcher 子进程，避免僵尸进程积累。
-fn reap_zombie_watchers() {
+// ── topd 订阅客户端（observer 实测期间休眠，保留待决）────────────────────────
+#[allow(dead_code)]
+const TOPD_SOCKET: &str = "/data/adb/device_faker/topd.sock";
+#[allow(dead_code)]
+const TOPD_RECONNECT_MIN: Duration = Duration::from_secs(1);
+#[allow(dead_code)]
+const TOPD_RECONNECT_MAX: Duration = Duration::from_secs(5);
+/// D2 限频告警间隔：同一分钟内最多一条 WARN。
+#[allow(dead_code)]
+const TOPD_WARN_INTERVAL: Duration = Duration::from_secs(60);
+
+#[allow(dead_code)]
+struct TopdLink {
+    connected: bool,
+    /// 最近一次已知前台包名（基线 + 每条事件更新；"-" 表示未知）
+    last_fg: String,
+    last_warn: Option<Instant>,
+}
+
+static TOPD_LINK: OnceLock<Mutex<TopdLink>> = OnceLock::new();
+
+#[allow(dead_code)]
+fn topd_link() -> &'static Mutex<TopdLink> {
+    TOPD_LINK.get_or_init(|| {
+        Mutex::new(TopdLink {
+            connected: false,
+            last_fg: "-".to_string(),
+            last_warn: None,
+        })
+    })
+}
+
+#[allow(dead_code)]
+fn topd_connected() -> bool {
+    topd_link().lock().unwrap().connected
+}
+
+/// D2 限频 WARN：topd 连不上时属性/密度一律不应用。
+#[allow(dead_code)]
+fn warn_topd_unavailable() {
+    let mut link = topd_link().lock().unwrap();
+    let due = link
+        .last_warn
+        .map(|t| t.elapsed() >= TOPD_WARN_INTERVAL)
+        .unwrap_or(true);
+    if due {
+        warn!(
+            "topd unavailable at {TOPD_SOCKET}; property/density gating degraded (nothing will be applied)"
+        );
+        link.last_warn = Some(Instant::now());
+    }
+}
+
+#[allow(dead_code)]
+fn spawn_topd_client_once() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        if let Err(e) = thread::Builder::new()
+            .name("topd-sub".into())
+            .spawn(topd_client_loop)
+        {
+            error!("failed to spawn topd subscriber thread: {e}");
+        }
+    });
+}
+
+/// topd 订阅线程：连上后逐行读 `FG <package>` 分发到中央状态机；
+/// 断线退避 1s→5s 重连，期间 Apply 走 D2 退化路径。
+#[allow(dead_code)]
+fn topd_client_loop() {
+    let mut backoff = TOPD_RECONNECT_MIN;
     loop {
-        match unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) } {
-            0 | -1 => break,
-            _ => {} // 收割到一个僵尸，继续尝试
+        match UnixStream::connect(TOPD_SOCKET) {
+            Ok(stream) => {
+                backoff = TOPD_RECONNECT_MIN;
+                {
+                    let mut link = topd_link().lock().unwrap();
+                    link.connected = true;
+                    link.last_warn = None;
+                }
+                info!("connected to topd at {TOPD_SOCKET}");
+
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break, // EOF：topd 断开
+                        Ok(_) => {
+                            let msg = line.trim();
+                            if let Some(pkg) = msg.strip_prefix("FG ") {
+                                let pkg = pkg.trim().to_string();
+                                topd_link().lock().unwrap().last_fg = pkg.clone();
+                                handle_fg_event(&pkg);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("topd read error: {e}");
+                            break;
+                        }
+                    }
+                }
+
+                topd_link().lock().unwrap().connected = false;
+                info!("topd connection lost, will reconnect");
+            }
+            Err(_) => {
+                warn_topd_unavailable();
+            }
+        }
+        thread::sleep(backoff);
+        if backoff < TOPD_RECONNECT_MAX {
+            backoff = (backoff * 2).min(TOPD_RECONNECT_MAX);
         }
     }
 }
+
+// ── 中央状态机：FG 事件驱动激活/恢复 ────────────────────────────────────────
+//
+// | 条件                                    | 动作                             |
+// |-----------------------------------------|----------------------------------|
+// | 死会话（kill 0 失败）且未激活             | 清空（搭车式惰性回收，D5）        |
+// | FG == 包名 && !activated                 | 应用 props 批量 + density，激活   |
+// | FG == 包名 && activated                  | 幂等跳过                          |
+// | FG != 包名 && activated                  | 恢复 props + density，失活        |
+// | FG == "-"（过渡态）                      | 保持现状（宁可晚不错）            |
+// | 其它                                     | 无操作                            |
+
+fn handle_fg_event(pkg: &str) {
+    let mut guard = SESSION.lock().unwrap();
+
+    // 惰性回收：死且未激活的会话直接清空；激活中的等焦点移交触发的失活收敛。
+    if let Some(sess) = guard.as_ref()
+        && unsafe { libc::kill(sess.app_pid as i32, 0) } != 0
+        && !sess.activated
+    {
+        info!(
+            "Reaping dead session '{}' (pid {})",
+            sess.package, sess.app_pid
+        );
+        *guard = None;
+    }
+
+    if pkg == "-" {
+        return;
+    }
+
+    let Some(sess) = guard.as_mut() else {
+        return;
+    };
+    if pkg == sess.package {
+        if !sess.activated {
+            activate_session(sess);
+        }
+    } else if sess.activated {
+        let mut taken = guard.take().expect("session present");
+        deactivate_session(&mut taken, pkg);
+        *guard = Some(taken);
+    }
+}
+
+fn activate_session(sess: &mut Session) {
+    if let Err(e) = apply_props_batch(&sess.spec.props, &sess.spec.delete_props) {
+        // 标记已激活（即使部分失败），保证失活路径总能恢复到采样基线。
+        error!(
+            "FG activation: prop batch failed for '{}': {e}",
+            sess.package
+        );
+    }
+    if let Some(density) = sess.spec.density
+        && let Err(e) = set_density(Some(density))
+    {
+        error!("FG activation: density failed for '{}': {e}", sess.package);
+    }
+    sess.activated = true;
+    info!(
+        "FG == {}: density/props activated ({} set, {} delete, dpi={:?})",
+        sess.package,
+        sess.spec.props.len(),
+        sess.spec.delete_props.len(),
+        sess.spec.density
+    );
+}
+
+fn deactivate_session(sess: &mut Session, focused: &str) {
+    if let Err(e) = restore_props_batch(&sess.originals.prop_backups) {
+        error!(
+            "FG handoff: prop restore failed for '{}': {e}",
+            sess.package
+        );
+    }
+    if let Err(e) = restore_density(sess.originals.orig_density) {
+        error!(
+            "FG handoff: density restore failed for '{}': {e}",
+            sess.package
+        );
+    }
+    sess.activated = false;
+    info!(
+        "FG -> {focused}: density/props restored for '{}' (deactivated, orig_density={:?}, {} props)",
+        sess.package,
+        sess.originals.orig_density,
+        sess.originals.prop_backups.len()
+    );
+}
+
+// ── 协议与机械层（保持不变）──────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CpuSpoofRequest {
@@ -139,9 +342,8 @@ pub fn spoof_system_props_via_companion(
         );
     }
 
-    // companion 侧现在自己管理会话状态和恢复逻辑；
+    // companion 侧现在自己管理会话状态与前台门控逻辑；
     // Zygisk 模块侧不再需要 ACTIVE_RESET_SESSION。
-
     Ok(())
 }
 
@@ -275,6 +477,8 @@ fn rebuild_all_contexts(keys_iter: impl Iterator<Item = impl AsRef<str>>) {
     }
 }
 
+/// Apply 请求处理器：只采样备份 + 登记未激活会话（D1），
+/// 不急切应用任何全局态；激活由 FG 事件驱动。
 fn apply_resetprop_session(
     request: ResetpropSessionRequest,
 ) -> anyhow::Result<HashMap<String, String>> {
@@ -293,543 +497,106 @@ fn apply_resetprop_session(
         );
     }
 
-    // ① 收割已退出的 watcher 僵尸进程
-    reap_zombie_watchers();
+    // 首次 Apply 时惰性启动前台源（UidObserver 事件驱动；失败退 0.5s 轮询）。
+    // 注：topd 订阅线程（spawn_topd_client_once）在 observer 实测期间暂不启用，
+    // 代码保留待 observer 验证后决定去留。
+    spawn_fg_observer_once();
 
-    // ② 检查是否为同一 package 的重复请求（如多进程 app 的子进程）
-    //    同一 package 且旧进程仍存活时跳过恢复 + 重新应用。
-    //    如果旧进程已退出，清除旧会话并重新应用（属性可能已被恢复）。
+    // D2 宁缺毋滥：前台源未就绪时不做任何全局变更，响应成功（空备份）。
+    if !fg_ready() {
+        warn_fg_unavailable();
+        info!(
+            "Apply for '{}' skipped (fg source not ready): no global changes applied",
+            request.package_name
+        );
+        return Ok(HashMap::new());
+    }
+
+    // 收割 CPU spoof 等 fork 子进程的僵尸（轻量兜底）。
+    reap_zombie_children();
+
+    let mut guard = SESSION.lock().unwrap();
+
+    // 同包去重：同包 + 旧进程存活 + dpi 未变 → 幂等返回现有备份。
+    if let Some(sess) = guard.as_ref()
+        && sess.package == request.package_name
+        && unsafe { libc::kill(sess.app_pid as i32, 0) } == 0
+        && sess.spec.density == request.density
     {
-        let guard = ACTIVE_SESSION.lock().unwrap();
-        if let Some(ref active) = *guard
-            && active.package == request.package_name
-        {
-            // 检查旧进程是否仍存活
-            let old_alive = unsafe { libc::kill(active.pid as i32, 0) } == 0;
-            if old_alive && active.density == request.density {
-                info!(
-                    "Skipping duplicate Apply for package '{}' (pid {}), session already active (old pid {} alive)",
-                    request.package_name, request.pid, active.pid
-                );
-                return Ok(active.backups.clone());
-            } else {
-                info!(
-                    "Old session for package '{}' (pid {}) is dead, clearing and re-applying for new pid {}",
-                    request.package_name, active.pid, request.pid
-                );
-            }
-        }
+        info!(
+            "Skipping duplicate Apply for '{}' (pid {}), session already registered",
+            request.package_name, request.pid
+        );
+        return Ok(sess.originals.prop_backups.clone());
     }
 
-    // ③ 如果存在旧会话，先停止 watcher 并恢复属性/DPI 快照。
-    if let Some(old) = ACTIVE_SESSION.lock().unwrap().take() {
-        let old_alive = unsafe { libc::kill(old.pid as i32, 0) == 0 };
-        if old_alive {
-            stop_watcher(old.watcher_pid);
+    // 接管：已有会话先收敛（激活中的恢复，未激活的直接丢弃），保证采样干净。
+    if let Some(old) = guard.take() {
+        if old.activated {
             info!(
-                "Restoring previous session (package: {}, {} keys, dpi={:?}) before applying new session for '{}'",
-                old.package,
-                old.backups.len(),
-                old.density,
-                request.package_name
+                "Taking over active session '{}' (pid {}) for '{}'",
+                old.package, old.app_pid, request.package_name
             );
-            restore_active_session(&old);
+            let mut old = old;
+            deactivate_session(&mut old, &request.package_name);
         } else {
-            wait_for_watcher(old.watcher_pid);
             info!(
-                "Previous session '{}' (pid {}) is dead; watcher owns cleanup before applying new session",
-                old.package, old.pid
+                "Discarding inactive session '{}' for '{}'",
+                old.package, request.package_name
             );
         }
     }
 
-    // ④ 备份当前属性/DPI（旧会话已恢复，此时为真实值）
-    let mut backups = Vec::with_capacity(request.props.len() + request.delete_props.len());
-
-    for key in request.props.keys() {
-        let original = backup_property(key)?;
-        backups.push(PropBackup {
-            key: key.clone(),
-            original_value: original,
-        });
+    // 采样原始值（此刻全局干净）。
+    let mut prop_backups = HashMap::new();
+    for key in request.props.keys().chain(request.delete_props.iter()) {
+        prop_backups.insert(key.clone(), backup_property(key)?);
     }
-
-    for key in &request.delete_props {
-        let original = backup_property(key)?;
-        backups.push(PropBackup {
-            key: key.clone(),
-            original_value: original,
-        });
-    }
-
-    let backups_for_response: HashMap<String, String> = backups
-        .iter()
-        .map(|entry| (entry.key.clone(), entry.original_value.clone()))
-        .collect();
-
-    // ⑤ 应用新伪装值并启动统一 watcher。
-    let original_density = if request.density.is_some() {
+    let orig_density = if request.density.is_some() {
         query_density_override()?
     } else {
         None
     };
-    let action = WatcherAction {
-        props: request.props.clone(),
-        delete_props: request.delete_props.clone(),
-        backups: backups.clone(),
-        density: request.density,
-        original_density,
-    };
-    if let Err(err) = action.apply() {
-        let _ = action.restore();
-        return Err(err);
-    }
 
-    // ⑥ Fork 恢复 watcher
-    let watcher_pid = match spawn_process_state_watcher(request.pid, action.clone()) {
-        Ok(pid) => pid,
-        Err(e) => {
-            error!("Failed to spawn restore watcher: {e}, rolling back applied session");
-            let _ = action.restore();
-            anyhow::bail!("failed to spawn restore watcher: {e}");
-        }
-    };
-
-    // ⑦ 存储新会话
-    *ACTIVE_SESSION.lock().unwrap() = Some(ActiveSession {
-        package: request.package_name.clone(),
-        pid: request.pid,
-        backups: backups
-            .iter()
-            .map(|b| (b.key.clone(), b.original_value.clone()))
-            .collect(),
-        density: request.density,
-        original_density,
-        watcher_pid,
-    });
-
-    Ok(backups_for_response)
-}
-
-fn restore_active_session(active: &ActiveSession) {
-    if active.density.is_some()
-        && let Err(e) = restore_density(active.original_density)
-    {
-        warn!("Failed to restore old session density: {e}");
-    }
-
-    for (key, value) in &active.backups {
-        if let Err(e) = apply_resetprop(key, value) {
-            warn!("Failed to restore old session key '{key}': {e}");
-        }
-    }
-    if !active.backups.is_empty() {
-        rebuild_all_contexts(active.backups.keys());
-    }
-}
-
-fn run_wm_density(args: &[&str]) -> anyhow::Result<String> {
-    let mut command = std::process::Command::new("/system/bin/wm");
-    command.arg("density").args(args);
-
-    let output =
-        match command.output() {
-            Ok(output) => output,
-            Err(first_error) => {
-                // Some root environments expose Android tools through PATH only.
-                let mut fallback = std::process::Command::new("wm");
-                fallback.arg("density").args(args).output().map_err(|second_error| {
-                anyhow::anyhow!(
-                    "failed to execute /system/bin/wm ({first_error}) or wm ({second_error})"
-                )
-            })?
-            }
-        };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
-        anyhow::bail!(
-            "wm density {:?} failed with status {}: {}",
-            args,
-            output.status,
-            stderr.trim()
-        );
-    }
-
-    let mut text = stdout.into_owned();
-    if !stderr.trim().is_empty() {
-        if !text.ends_with('\n') {
-            text.push('\n');
-        }
-        text.push_str(&stderr);
-    }
-    Ok(text)
-}
-
-fn query_density_override() -> anyhow::Result<Option<u32>> {
-    let output = run_wm_density(&[])?;
-    for line in output.lines() {
-        let Some((label, value)) = line.split_once(':') else {
-            continue;
-        };
-        if !label.trim().eq_ignore_ascii_case("override density") {
-            continue;
-        }
-
-        let value = value.trim();
-        if value.is_empty() || value.eq_ignore_ascii_case("reset") || value == "0" {
-            return Ok(None);
-        }
-
-        let density = value
-            .parse::<u32>()
-            .map_err(|e| anyhow::anyhow!("invalid Override density value '{value}': {e}"))?;
-        return Ok(Some(density));
-    }
-
-    // AOSP omits the Override density line when no override is active.
-    Ok(None)
-}
-
-fn set_density(density: Option<u32>) -> anyhow::Result<()> {
-    let density_string;
-    let args = if let Some(density) = density {
-        density_string = density.to_string();
-        vec![density_string.as_str()]
-    } else {
-        vec!["reset"]
-    };
-    run_wm_density(&args).map(|_| ())
-}
-
-fn restore_density(original_density: Option<u32>) -> anyhow::Result<()> {
-    set_density(original_density)
-}
-
-fn stop_watcher(watcher_pid: i32) {
-    if watcher_pid <= 0 {
-        return;
-    }
-
-    unsafe {
-        // The watcher calls setsid(), so its process group also contains any
-        // in-flight command child. Stop the whole isolated group before the
-        // caller restores the session state.
-        if libc::kill(-watcher_pid, libc::SIGTERM) != 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
-                warn!("Failed to stop watcher {watcher_pid}: {error}");
-            }
-        }
-
-        wait_for_watcher(watcher_pid);
-    }
-}
-
-fn wait_for_watcher(watcher_pid: i32) {
-    if watcher_pid <= 0 {
-        return;
-    }
-
-    unsafe {
-        loop {
-            let result = libc::waitpid(watcher_pid, std::ptr::null_mut(), 0);
-            if result == watcher_pid {
-                break;
-            }
-            if result < 0 {
-                let error = std::io::Error::last_os_error();
-                if error.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
-                }
-                // ECHILD means reap_zombie_watchers() already collected it.
-                break;
-            }
-        }
-    }
-}
-
-fn spawn_process_state_watcher(pid: u32, action: WatcherAction) -> anyhow::Result<i32> {
-    let spawn_label = action.spawn_label();
-
-    unsafe {
-        match libc::fork() {
-            -1 => anyhow::bail!("fork failed: {}", std::io::Error::last_os_error()),
-            0 => {
-                if libc::setsid() == -1 {
-                    libc::_exit(1);
-                }
-                let label = action.label();
-                if let Err(e) = watch_process_state(pid, action) {
-                    error!("{label} failed for pid {pid}: {e}");
-                }
-                libc::_exit(0);
-            }
-            child_pid => {
-                info!(
-                    "Spawned {spawn_label} pid={child_pid} for app pid={pid} (bg_debounce={RESTORE_DEBOUNCE_MS}ms)"
-                );
-                Ok(child_pid)
-            }
-        }
-    }
-}
-
-fn watch_process_state(pid: u32, action: WatcherAction) -> anyhow::Result<()> {
-    // 优先使用 inotify 监听 oom_score_adj（事件驱动，零轮询）。
-    // 回退到 /proc/<pid>/cgroup 轮询（inotify 在部分设备/内核上不可用）。
-    match watch_via_inotify(pid, &action) {
-        Ok(()) => return Ok(()),
-        Err(e) => {
-            warn!(
-                "inotify on oom_score_adj unavailable for {} ({e}), falling back to cgroup polling",
-                action.label()
-            );
-        }
-    }
-
-    watch_via_cgroup_polling(pid, &action)
-}
-
-/// 切入 init 的 mount namespace。
-///
-/// watcher 子进程 fork 自 companion，其 procfs 实例在部分设备上与 lmkd/
-/// system_server 写入的实例不同（独立 superblock），inotify 收不到事件。
-/// init 是所有写入方的祖先：对齐后 watch 与写入落在同一 inode 上。
-/// nsfs 句柄跨实例共享——从本实例打开 /proc/1/ns/mnt 拿到的即 init 命名空间
-/// 的真句柄。已在自身 ns 时 setns 幂等成功（健康设备直接进入纯事件模式）。
-fn setns_to_init_mnt_ns() -> anyhow::Result<()> {
-    let path = b"/proc/1/ns/mnt\0";
-    let fd = unsafe { libc::open(path.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
-    if fd < 0 {
-        anyhow::bail!(
-            "open /proc/1/ns/mnt failed: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    let rc = unsafe { libc::setns(fd, libc::CLONE_NEWNS) };
-    let open_err = std::io::Error::last_os_error();
-    unsafe { libc::close(fd) };
-    if rc != 0 {
-        anyhow::bail!("setns(CLONE_NEWNS) failed: {open_err}");
-    }
-    Ok(())
-}
-
-fn watch_via_inotify(pid: u32, action: &WatcherAction) -> anyhow::Result<()> {
-    const BACKGROUND_THRESHOLD: i32 = 200;
-    let background_debounce = Duration::from_millis(RESTORE_DEBOUNCE_MS);
-    /// 兜底轮询间隔（仅 setns 失败时使用）。部分设备的 mount namespace 中
-    /// companion 挂载的是独立的 procfs superblock（实测 evergo + Android 16：
-    /// watcher 与 lmkd 看到的 /proc/<pid>/oom_score_adj 是不同 inode），
-    /// IN_MODIFY 事件永远无法送达。setns 到 init 成功后与写入方共享同一实例，
-    /// epoll_wait 可无限阻塞纯事件驱动；失败时保留 200ms 轮询兜底
-    /// （procfs 内容读取跨实例一致，仅事件投递受影响）。
-    const POLL_INTERVAL: Duration = Duration::from_millis(200);
-
-    // 先尝试切入 init 的 mount namespace：lmkd/system_server 都是 init 后代，
-    // 它们写的就是 init 实例的 procfs；对齐后 inotify 事件必然可达。
-    let event_pure = match setns_to_init_mnt_ns() {
-        Ok(()) => true,
-        Err(e) => {
-            warn!("setns to init mnt ns failed ({e}); keeping {POLL_INTERVAL:?} polling fallback");
-            false
-        }
-    };
-
-    let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0u32) };
-    if pidfd < 0 {
-        anyhow::bail!("pidfd_open failed");
-    }
-    let pidfd = pidfd as i32;
-
-    let ifd = unsafe { libc::inotify_init() };
-    if ifd < 0 {
-        unsafe { libc::close(pidfd) };
-        anyhow::bail!("inotify_init failed");
-    }
-
-    let oom_path = format!("/proc/{pid}/oom_score_adj\0");
-    let wd = unsafe {
-        libc::inotify_add_watch(
-            ifd,
-            oom_path.as_ptr() as *const libc::c_char,
-            libc::IN_MODIFY,
-        )
-    };
-    if wd < 0 {
-        unsafe {
-            libc::close(ifd);
-            libc::close(pidfd);
-        }
-        anyhow::bail!("inotify_add_watch on oom_score_adj failed");
-    }
-    let wd = wd as u32;
-
-    let efd = unsafe { libc::epoll_create1(0) };
-    if efd < 0 {
-        unsafe {
-            libc::inotify_rm_watch(ifd, wd);
-            libc::close(ifd);
-            libc::close(pidfd);
-        }
-        anyhow::bail!("epoll_create1 failed");
-    }
-
-    let mut ev = libc::epoll_event {
-        events: libc::EPOLLIN as u32,
-        u64: pidfd as u64,
-    };
-    unsafe { libc::epoll_ctl(efd, libc::EPOLL_CTL_ADD, pidfd, &mut ev) };
-    ev.u64 = ifd as u64;
-    unsafe { libc::epoll_ctl(efd, libc::EPOLL_CTL_ADD, ifd, &mut ev) };
-
-    let label = action.label();
-    let mut is_applied = true;
-    let mut background_since: Option<Instant> = None;
-    let mut events = [libc::epoll_event { events: 0, u64: 0 }; 2];
+    let backups_for_response = prop_backups.clone();
 
     info!(
-        "{label}: inotify monitoring oom_score_adj for pid {pid} ({})",
-        if event_pure {
-            "pure event, init ns aligned"
-        } else {
-            "poll fallback"
-        }
+        "Apply registered session for '{}' (pid {}, density={:?}, orig_density={:?}, {} props, {} deletes)",
+        request.package_name,
+        request.pid,
+        request.density,
+        orig_density,
+        prop_backups.len(),
+        request.delete_props.len()
     );
 
-    loop {
-        let timeout = match background_since {
-            Some(bg_start) => {
-                // 防抖窗口内：睡到截止时刻即可，事件到达会提前唤醒
-                let remaining = background_debounce
-                    .checked_sub(bg_start.elapsed())
-                    .unwrap_or(Duration::ZERO);
-                remaining.as_millis() as i32
-            }
-            None => {
-                if event_pure {
-                    // 纯事件驱动：无限阻塞，靠 IN_MODIFY / pidfd 唤醒
-                    -1
-                } else {
-                    POLL_INTERVAL.as_millis() as i32
-                }
-            }
-        };
+    *guard = Some(Session {
+        package: request.package_name.clone(),
+        app_pid: request.pid,
+        spec: SessionSpec {
+            props: request.props,
+            delete_props: request.delete_props,
+            density: request.density,
+        },
+        originals: Originals {
+            prop_backups,
+            orig_density,
+        },
+        activated: false,
+    });
+    drop(guard);
 
-        let nfds = unsafe { libc::epoll_wait(efd, events.as_mut_ptr(), 2, timeout) };
-
-        if nfds < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            warn!("{label}: epoll_wait error: {error}, attempting restore before exit");
-            if is_applied {
-                let _ = action.restore();
-            }
-            break;
-        }
-
-        if nfds > 0 {
-            let process_exited = events
-                .iter()
-                .take(nfds as usize)
-                .any(|event| event.u64 == pidfd as u64);
-            if process_exited {
-                if is_applied {
-                    action.restore()?;
-                }
-                info!("{label}: app pid {pid} exited (pidfd event)");
-                break;
-            }
-        }
-
-        // 统一状态机 tick：无论唤醒来自 inotify 事件还是轮询超时，都读当前值。
-        // procfs 内容跨 mount namespace 一致，轮询不依赖 fsnotify 投递。
-        let oom_value = read_oom_score_adj(pid);
-        if oom_value >= BACKGROUND_THRESHOLD {
-            if is_applied {
-                let bg_start = *background_since.get_or_insert_with(Instant::now);
-                if bg_start.elapsed() >= background_debounce {
-                    action.restore()?;
-                    is_applied = false;
-                    background_since = None;
-                    info!("{label} restored session for pid {pid} (oom={oom_value})");
-                }
-            }
-        } else {
-            background_since = None;
-            if !is_applied {
-                action.apply()?;
-                is_applied = true;
-                info!("{label} re-applied session for pid {pid} (oom={oom_value})");
-            }
-        }
+    // 关闭竞态：焦点早已在本包（事件先于 Apply 到达 / 热重载重登记），立即激活。
+    // observer 模式下优先查 fg_observer::current_fg()；topd 模式查 topd_link。
+    let fg = crate::fg_observer::current_fg()
+        .or_else(|| Some(topd_link().lock().unwrap().last_fg.clone()));
+    if let Some(fg) = fg
+        && fg == request.package_name
+    {
+        handle_fg_event(&fg);
     }
 
-    unsafe {
-        libc::epoll_ctl(efd, libc::EPOLL_CTL_DEL, ifd, std::ptr::null_mut());
-        libc::epoll_ctl(efd, libc::EPOLL_CTL_DEL, pidfd, std::ptr::null_mut());
-        libc::inotify_rm_watch(ifd, wd);
-        libc::close(efd);
-        libc::close(ifd);
-        libc::close(pidfd);
-    }
-    Ok(())
-}
-
-/// 读取 /proc/<pid>/oom_score_adj，失败返回 0（视为前台）。
-fn read_oom_score_adj(pid: u32) -> i32 {
-    let path = format!("/proc/{pid}/oom_score_adj");
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| s.trim().parse::<i32>().ok())
-        .unwrap_or(0)
-}
-
-/// 轮询回退方案：/proc/<pid>/cgroup 检查 top-app（与原实现相同）。
-fn watch_via_cgroup_polling(pid: u32, action: &WatcherAction) -> anyhow::Result<()> {
-    const POLL_INTERVAL: Duration = Duration::from_millis(200);
-    let background_debounce = Duration::from_millis(RESTORE_DEBOUNCE_MS);
-
-    let proc_path = format!("/proc/{pid}");
-    let label = action.label();
-    let mut is_applied = true;
-    let mut background_since: Option<Instant> = None;
-
-    info!("{label}: cgroup polling for pid {pid}");
-
-    loop {
-        if !std::path::Path::new(&proc_path).exists() {
-            if is_applied {
-                action.restore()?;
-            }
-            break;
-        }
-
-        if is_process_in_top_app(pid) {
-            background_since = None;
-            if !is_applied {
-                action.apply()?;
-                is_applied = true;
-                info!("{label} re-applied session for pid {pid}");
-            }
-        } else {
-            let bg_start = background_since.get_or_insert_with(Instant::now);
-            if is_applied && bg_start.elapsed() >= background_debounce {
-                action.restore()?;
-                is_applied = false;
-                background_since = None;
-                info!("{label} restored session for pid {pid}");
-            }
-        }
-
-        thread::sleep(POLL_INTERVAL);
-    }
-
-    Ok(())
+    Ok(backups_for_response)
 }
 
 fn restore_properties(request: RestoreRequest) -> anyhow::Result<()> {
@@ -925,13 +692,13 @@ fn apply_props_batch(
     Ok(())
 }
 
-fn restore_props_batch(backups: &[PropBackup]) -> anyhow::Result<()> {
-    for entry in backups {
-        apply_resetprop(&entry.key, &entry.original_value)?;
+fn restore_props_batch(backups: &HashMap<String, String>) -> anyhow::Result<()> {
+    for (key, value) in backups {
+        apply_resetprop(key, value)?;
     }
 
-    // Rebuild using the first backup's key to find the context.
-    rebuild_all_contexts(backups.iter().map(|b| &b.key));
+    // Rebuild using all backup keys to find the contexts.
+    rebuild_all_contexts(backups.keys());
 
     Ok(())
 }
@@ -961,11 +728,92 @@ fn write_log_lines_to_path(path: &str, lines: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn is_process_in_top_app(pid: u32) -> bool {
-    let cgroup_path = format!("/proc/{pid}/cgroup");
-    match fs::read_to_string(&cgroup_path) {
-        Ok(content) => content.lines().any(|line| line.contains("top-app")),
-        Err(_) => true,
+fn run_wm_density(args: &[&str]) -> anyhow::Result<String> {
+    let mut command = std::process::Command::new("/system/bin/wm");
+    command.arg("density").args(args);
+
+    let output =
+        match command.output() {
+            Ok(output) => output,
+            Err(first_error) => {
+                // Some root environments expose Android tools through PATH only.
+                let mut fallback = std::process::Command::new("wm");
+                fallback.arg("density").args(args).output().map_err(|second_error| {
+                anyhow::anyhow!(
+                    "failed to execute /system/bin/wm ({first_error}) or wm ({second_error})"
+                )
+            })?
+            }
+        };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        anyhow::bail!(
+            "wm density {:?} failed with status {}: {}",
+            args,
+            output.status,
+            stderr.trim()
+        );
+    }
+
+    let mut text = stdout.into_owned();
+    if !stderr.trim().is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&stderr);
+    }
+    Ok(text)
+}
+
+fn query_density_override() -> anyhow::Result<Option<u32>> {
+    let output = run_wm_density(&[])?;
+    for line in output.lines() {
+        let Some((label, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !label.trim().eq_ignore_ascii_case("override density") {
+            continue;
+        }
+
+        let value = value.trim();
+        if value.is_empty() || value.eq_ignore_ascii_case("reset") || value == "0" {
+            return Ok(None);
+        }
+
+        let density = value
+            .parse::<u32>()
+            .map_err(|e| anyhow::anyhow!("invalid Override density value '{value}': {e}"))?;
+        return Ok(Some(density));
+    }
+
+    // AOSP omits the Override density line when no override is active.
+    Ok(None)
+}
+
+fn set_density(density: Option<u32>) -> anyhow::Result<()> {
+    let density_string;
+    let args = if let Some(density) = density {
+        density_string = density.to_string();
+        vec![density_string.as_str()]
+    } else {
+        vec!["reset"]
+    };
+    run_wm_density(&args).map(|_| ())
+}
+
+fn restore_density(original_density: Option<u32>) -> anyhow::Result<()> {
+    set_density(original_density)
+}
+
+/// 收割已退出的 fork 子进程（CPU spoof 挂载子进程等），避免僵尸积累。
+fn reap_zombie_children() {
+    loop {
+        match unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) } {
+            0 | -1 => break,
+            _ => {} // 收割到一个僵尸，继续尝试
+        }
     }
 }
 
@@ -1025,10 +873,4 @@ impl CompanionResponse {
             backups: Some(backups),
         }
     }
-}
-
-#[derive(Clone)]
-struct PropBackup {
-    key: String,
-    original_value: String,
 }
