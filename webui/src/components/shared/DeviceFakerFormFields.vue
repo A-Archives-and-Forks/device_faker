@@ -52,6 +52,10 @@
     <el-input v-model="formData.board" :placeholder="t('templates.placeholders.board')" />
   </el-form-item>
 
+  <el-form-item :label="t('templates.fields.soc_model')">
+    <el-input v-model="formData.soc_model" :placeholder="t('templates.placeholders.soc_model')" />
+  </el-form-item>
+
   <el-collapse>
     <el-collapse-item :title="t('templates.fields.system')" name="system">
       <el-form-item :label="t('templates.fields.build_id')">

@@ -206,6 +206,9 @@ pub struct DeviceTemplate {
     pub hardware: Option<String>,
     #[serde(default)]
     pub board: Option<String>,
+    /// SoC 型号伪装（映射 Build.SOC_MODEL + ro.soc.model，单属性无分区副本）
+    #[serde(default)]
+    pub soc_model: Option<String>,
     #[serde(default)]
     pub fingerprint: Option<String>,
     #[serde(default)]
@@ -264,6 +267,9 @@ pub struct AppConfig {
     pub hardware: Option<String>,
     #[serde(default)]
     pub board: Option<String>,
+    /// SoC 型号伪装（映射 Build.SOC_MODEL + ro.soc.model，单属性无分区副本）
+    #[serde(default)]
+    pub soc_model: Option<String>,
     #[serde(default)]
     pub fingerprint: Option<String>,
     #[serde(default)]
@@ -356,6 +362,7 @@ impl Config {
                 product: app.product.clone(),
                 hardware: app.hardware.clone(),
                 board: app.board.clone(),
+                soc_model: app.soc_model.clone(),
                 fingerprint: app.fingerprint.clone(),
                 build_id: app.build_id.clone(),
                 characteristics: app.characteristics.clone(),
@@ -392,6 +399,7 @@ impl Config {
                 product: template.product.clone(),
                 hardware: template.hardware.clone(),
                 board: template.board.clone(),
+                soc_model: template.soc_model.clone(),
                 fingerprint: template.fingerprint.clone(),
                 build_id: template.build_id.clone(),
                 characteristics: template.characteristics.clone(),
@@ -465,6 +473,12 @@ impl Config {
         // 检测的幽灵属性，故与 ro.hardware 同形态、不做整族展开）。
         if let Some(board) = field_value(&merged.board) {
             map.insert("ro.product.board".to_string(), board);
+        }
+
+        // Build.SOC_MODEL 的属性来源是 ro.soc.model（单一属性，同 hardware/board
+        // 形态，无分区变体）。
+        if let Some(soc_model) = field_value(&merged.soc_model) {
+            map.insert("ro.soc.model".to_string(), soc_model);
         }
 
         if let Some(fingerprint) = field_value(&merged.fingerprint) {
@@ -595,6 +609,7 @@ pub struct MergedAppConfig {
     pub product: Option<String>,
     pub hardware: Option<String>,
     pub board: Option<String>,
+    pub soc_model: Option<String>,
     pub fingerprint: Option<String>,
     pub build_id: Option<String>,
     pub characteristics: Option<String>,

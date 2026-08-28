@@ -63,6 +63,12 @@ pub fn hook_build_fields(
                 .map_err(|_e| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?;
         }
 
+        // SOC_MODEL 字段（API 29+ 存在；Build.SOC_MODEL 的属性来源是 ro.soc.model）
+        if let Some(soc_model) = field_str(&merged_config.soc_model) {
+            set_build_field(jenv, &build_class, jni_str!("SOC_MODEL"), soc_model)
+                .map_err(|_e| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?;
+        }
+
         if let Some(fingerprint) = field_str(&merged_config.fingerprint) {
             set_build_field(jenv, &build_class, jni_str!("FINGERPRINT"), fingerprint)
                 .map_err(|_e| jni::errors::Error::JniCall(jni::errors::JniError::Unknown))?;
