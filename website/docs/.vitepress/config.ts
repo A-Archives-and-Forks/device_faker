@@ -30,6 +30,16 @@ export default defineConfig({
 
     ['link', { rel: 'alternate', hreflang: 'zh-CN', href: `${SITE}` }],
     ['link', { rel: 'alternate', hreflang: 'en-US', href: `${SITE}en/` }],
-    ['link', { rel: 'alternate', hreflang: 'x-default', href: `${SITE}` }]
+    ['link', { rel: 'alternate', hreflang: 'x-default', href: `${SITE}` }],
+
+    // Cloudflare Web Analytics
+    [
+      'script',
+      {
+        type: 'module',
+        src: 'https://static.cloudflareinsights.com/beacon.min.js',
+        'data-cf-beacon': JSON.stringify({ token: '7a60b306ee8f46f38f2699681b26453e' })
+      }
+    ]
   ]
 })
