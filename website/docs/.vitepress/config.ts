@@ -25,7 +25,7 @@ export default defineConfig({
     ['meta', { property: 'og:site_name', content: 'Device Faker' }],
     ['meta', { property: 'og:title', content: 'Device Faker — 基于 Zygisk 的机型伪装模块' }],
     ['meta', { property: 'og:description', content: '为每个应用配置不同的设备型号，基于 Zygisk 的机型伪装模块。' }],
-    ['meta', { property: 'og:image', content: `${SITE}logo.png` }],
+    ['meta', { property: 'og:image', content: `${SITE}og-image.png` }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
 
     ['link', { rel: 'alternate', hreflang: 'zh-CN', href: `${SITE}` }],
