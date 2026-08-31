@@ -66,14 +66,21 @@ export default defineConfig({
           location.replace(base + 'en/' + sub + location.search + location.hash)
         }
       })()
-      ;(() => {
+            ;(() => {
         const base = '/device_faker/'
-        document.addEventListener('click', e => {
+        const onPick = e => {
           const a = e.target && e.target.closest ? e.target.closest('a') : null
           if (!a) return
           const href = a.getAttribute('href') || ''
-          if (!href.startsWith(base)) return
-          const sub = href.slice(base.length)
+          let sub = null
+          if (href.startsWith(base)) sub = href.slice(base.length)
+          else {
+            try {
+              const u = new URL(href, location.origin)
+              if (u.origin === location.origin && u.pathname.startsWith(base)) sub = u.pathname.slice(base.length)
+            } catch (err) {}
+          }
+          if (sub === null) return
           const cur = location.pathname.slice(base.length)
           const t = sub.startsWith('en/') || sub === 'en'
           const c = cur.startsWith('en/') || cur === 'en'
@@ -85,7 +92,10 @@ export default defineConfig({
               else localStorage.setItem('lang-pref:/device_faker/', lang)
             } catch (err) {}
           }
-        })
+        }
+        // capture 阶段 + pointerdown 双保险：早于扩展对 DOM/事件的包装
+        document.addEventListener('click', onPick, true)
+        document.addEventListener('pointerdown', onPick, true)
       })()`
     ]
   ]
