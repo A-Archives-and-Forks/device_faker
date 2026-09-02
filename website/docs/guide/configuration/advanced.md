@@ -5,7 +5,7 @@
 所有应用统一走同一执行流（无需选择模式）：
 
 ```
-① JNI 覆写 Build 静态字段 → ② COW 或 companion resetprop → ③ DPI 伪装 → ④ CPU 伪装 → ⑤ DlClose 卸载模块
+① JNI 覆写 Build 静态字段 → ② COW 或 companion resetprop → ③ DPI 伪装 → ④ DlClose 卸载模块
 ```
 
 - **COW（默认）**：通过 mmap COW 重映射属性区文件，直接覆写属性内存，覆盖 `__system_property_get` / `__system_property_read_callback` 的 native 读取；无 GOT/PLT 修改；**只影响当前进程**的内存映射；模块写完立即 DlClose，零驻留
@@ -25,14 +25,6 @@ debug = true
 # ── 全局设置 ──────────────────────────────────────────────
 debug = false                        # 调试日志（默认关闭）
 default_force_denylist_unmount = false
-default_cpu_spoof = "kirin_9030pro"  # 全局默认 CPU 预设
-
-# ── CPU 伪装预设表 ────────────────────────────────────────
-[cpu_presets]
-kirin_9030pro = """Processor       : AArch64 Processor rev 0 (aarch64)
-Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32
-...
-Hardware        : HiSilicon Kirin 9030 Pro"""
 
 # ── 机型模板 ──────────────────────────────────────────────
 [templates.redmagic_9_pro]
@@ -49,7 +41,6 @@ device = "REDMAGIC 11 PRO"
 product = "NX809J"
 fingerprint = "REDMAGIC/NX809J-UN/NX809J:16/BP2A.250605.031.A3/20251017.000000:user/release-keys"
 build_id = "BP2A.250605.031.A3"
-cpu_spoof = "kirin_9030pro"  # 模板内所有包名启用 CPU 伪装
 
 # ── 直接配置 ──────────────────────────────────────────────
 [[apps]]

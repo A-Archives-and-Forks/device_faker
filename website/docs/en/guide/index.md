@@ -11,7 +11,6 @@ A device model spoofing module based on Zygisk that can configure different devi
 - 📝 **Simple Configuration**: Using TOML format configuration files, easy to edit
 - 🎭 **Unified Execution Flow**: No mode selection needed, automatically schedules JNI field spoofing, COW property spoofing and companion services
 - 🔒 **COW Property Engine**: mmap copy-on-write property spoofing, per-process isolation with zero residency
-- 🧬 **CPU Camouflage**: Per-app /proc/cpuinfo spoofing
 - 🌐 **WebUI Management**: Provides graphical interface for convenient configuration management
 
 ## WebUI Features 🖥️

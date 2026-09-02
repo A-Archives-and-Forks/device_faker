@@ -3,7 +3,6 @@ mod atexit;
 mod companion;
 mod config;
 mod cow_props;
-mod cpu_spoof;
 #[cfg(target_os = "android")]
 mod fg_observer;
 #[cfg(target_os = "android")]
@@ -15,7 +14,6 @@ use std::{collections::HashMap, fs, path::Path};
 use anyhow::Context;
 use companion::{handle_companion_request, spoof_system_props_via_companion};
 use config::Config;
-use cpu_spoof::{apply_cpu_spoof, apply_cpu_spoof_unmount};
 use hooks::hook_build_fields;
 use jni::{EnvUnowned, errors::ThrowRuntimeExAndDefault};
 use log::{LevelFilter, error, info, warn};
@@ -132,17 +130,6 @@ impl MyModule {
             if config.debug {
                 info!("App {package_name} (user {user_id}) not in config, unloading module");
             }
-            // 即使应用未在 config 中，仍可能因其他 spoofed app 的 bind mount 泄漏而受影响。
-            // 主动卸载可能存在的 /proc/cpuinfo bind mount，确保本应用 namespace 干净。
-            // 内部 spoof_active_flag_exists() 检查决定是否走完整路径，
-            // 无 spoofed app 活跃时仅 1 次 access syscall (~13μs)。
-            // 不使用 config.has_any_cpu_spoof() 短路：config 热加载删除 cpu_spoof
-            // 配置后，仍活跃的 spoofed app 会因配置态判据脱节导致泄漏未清理。
-            if let Err(e) = apply_cpu_spoof_unmount(api, config.debug) {
-                error!("CPU spoof unmount failed for unconfigured {package_name}: {e:?}");
-            } else if config.debug {
-                info!("CPU spoof unmount applied for unconfigured {package_name}");
-            }
             api.set_option(ZygiskOption::DlCloseModuleLibrary);
             return Ok(());
         };
@@ -242,25 +229,7 @@ impl MyModule {
             }
         }
 
-        // ③ Companion 按需：CPU spoof
-        //    - 配置了 cpu_spoof: 走原有 apply_cpu_spoof 流程
-        //    - 未配置 cpu_spoof: 主动卸载可能泄漏到本应用 namespace 的 /proc/cpuinfo
-        //      bind mount（内部 spoof_active_flag_exists() 决定是否走完整路径）
-        if merged.cpuinfo_content.is_some() {
-            if let Err(e) = apply_cpu_spoof(api, &merged, &package_name, config.debug) {
-                error!("CPU spoof failed: {e:?}");
-            } else if config.debug {
-                info!("CPU spoof applied for {package_name}");
-            }
-        } else {
-            if let Err(e) = apply_cpu_spoof_unmount(api, config.debug) {
-                error!("CPU spoof unmount failed: {e:?}");
-            } else if config.debug {
-                info!("CPU spoof unmount applied for {package_name}");
-            }
-        }
-
-        // ④ DlClose（始终执行）
+        // ③ DlClose（始终执行）
         api.set_option(ZygiskOption::DlCloseModuleLibrary);
         Ok(())
     }

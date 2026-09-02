@@ -18,26 +18,10 @@
 ```toml
 debug = false                        # 调试日志（默认关闭）
 default_force_denylist_unmount = false
-default_cpu_spoof = "kirin_9030pro"  # 模板/应用未指定 cpu_spoof 时的兜底预设
 ```
 
 - `debug`：启用后输出 Info 级别日志（关闭时仅 Error），写入 `/data/adb/device_faker/logs/device_faker.log`；正常使用建议保持关闭，以免留下不必要的运行痕迹
 - `default_force_denylist_unmount`：为目标应用启用 Zygisk 的 `FORCE_DENYLIST_UNMOUNT`，可在模板/应用里用 `force_denylist_unmount` 覆盖
-- `default_cpu_spoof`：CPU 伪装预设名，模板/应用未指定 `cpu_spoof` 时回落到该预设
-
-### cpu_presets
-
-`[cpu_presets]` 定义命名预设，值为完整的 `/proc/cpuinfo` 内容（TOML 多行字符串，示例省略了中间行）：
-
-```toml
-[cpu_presets]
-kirin_9030pro = """Processor       : AArch64 Processor rev 0 (aarch64)
-Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32
-...
-Hardware        : HiSilicon Kirin 9030 Pro"""
-```
-
-在模板或 `[[apps]]` 中用 `cpu_spoof = "预设名"` 引用。详见 [CPU 伪装](./cpu-spoof.md)。
 
 ## 编辑配置
 
@@ -102,7 +86,7 @@ name = "popsicle"
 
 - **`[[apps]]` 是整记录匹配**：一旦包名命中 `[[apps]]`，该条记录**整体取代**模板——记录中未设置的字段**不会**回落模板，只套用全局默认值
 - 未命中 `[[apps]]` 时，在模板的 `packages` 列表中查找
-- 最终套用全局默认值：`force_denylist_unmount` ← `default_force_denylist_unmount`，CPU 预设 ← `default_cpu_spoof`
+- 最终套用全局默认值：`force_denylist_unmount` ← `default_force_denylist_unmount`
 - 未匹配任何配置的应用：不做伪装并卸载模块
 
 **覆盖模板示例**：
@@ -122,5 +106,4 @@ manufacturer = "Samsung"
 ## 下一步
 
 - [字段参考](./fields.md) — 能伪装哪些字段，每个字段对应什么
-- [CPU 伪装](./cpu-spoof.md) — 怎么伪造 /proc/cpuinfo
 - [高级用法](./advanced.md) — 属性伪造机制、完整示例、调试

@@ -5,7 +5,7 @@
 All apps go through the same unified flow (no mode selection needed):
 
 ```
-① JNI overwrite of Build static fields → ② COW or companion resetprop → ③ DPI spoofing → ④ CPU spoofing → ⑤ DlClose unload
+① JNI overwrite of Build static fields → ② COW or companion resetprop → ③ DPI spoofing → ④ DlClose unload
 ```
 
 - **COW (default)**: remaps the property-area file with mmap COW and overwrites property memory in place, covering native reads via `__system_property_get` / `__system_property_read_callback`; no GOT/PLT modification; **only affects the current process's** memory mapping; the module calls DlClose right after writing, leaving zero resident footprint
@@ -25,14 +25,6 @@ When enabled, Info-level logs are output (Error-only when disabled), written to 
 # ── Global settings ───────────────────────────────────────
 debug = false                        # debug logging (off by default)
 default_force_denylist_unmount = false
-default_cpu_spoof = "kirin_9030pro"  # global default CPU preset
-
-# ── CPU spoofing presets ──────────────────────────────────
-[cpu_presets]
-kirin_9030pro = """Processor       : AArch64 Processor rev 0 (aarch64)
-Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32
-...
-Hardware        : HiSilicon Kirin 9030 Pro"""
 
 # ── Device templates ──────────────────────────────────────
 [templates.redmagic_9_pro]
@@ -49,7 +41,6 @@ device = "REDMAGIC 11 PRO"
 product = "NX809J"
 fingerprint = "REDMAGIC/NX809J-UN/NX809J:16/BP2A.250605.031.A3/20251017.000000:user/release-keys"
 build_id = "BP2A.250605.031.A3"
-cpu_spoof = "kirin_9030pro"  # CPU spoofing for all packages in this template
 
 # ── Direct configuration ──────────────────────────────────
 [[apps]]

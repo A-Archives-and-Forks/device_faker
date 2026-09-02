@@ -69,8 +69,6 @@ manufacturer = "Custom"
 | `companion_resetprop` | `false` | When `true`, skips COW and sends all properties through the companion `resetprop` (writes the property area directly, without going through `property_service`) for system-wide consistent reads; when `false` (default), COW takes priority and only affects the current process's memory. See [Advanced Usage](./advanced.md#property-spoofing-mechanism) |
 | `dpi` | — | Temporarily sets system display density via `wm density`; range `120`–`640`; the companion saves and restores the original override |
 | `force_denylist_unmount` | inherits `default_force_denylist_unmount` | Force-enable Zygisk `FORCE_DENYLIST_UNMOUNT` for this app; priority: app > template > global default |
-| `cpu_spoof` | — | CPU spoofing preset name referencing `[cpu_presets]`; see [CPU Spoofing](./cpu-spoof.md) |
-| `cpu_spoof_custom` | — | Raw `/proc/cpuinfo` content; takes priority over `cpu_spoof` |
 
 **Notes**:
 

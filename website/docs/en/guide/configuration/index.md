@@ -18,26 +18,10 @@ The config is **hot-reloaded**: the module re-reads the file on every app launch
 ```toml
 debug = false                        # debug logging (off by default)
 default_force_denylist_unmount = false
-default_cpu_spoof = "kirin_9030pro"  # fallback preset when a template / app does not set cpu_spoof
 ```
 
 - `debug`: when enabled, Info-level logs are output (Error-only when disabled), written to `/data/adb/device_faker/logs/device_faker.log`; keep it disabled during normal use to avoid leaving unnecessary traces
 - `default_force_denylist_unmount`: enables Zygisk's `FORCE_DENYLIST_UNMOUNT` for target apps; can be overridden per template / per app with `force_denylist_unmount`
-- `default_cpu_spoof`: CPU spoofing preset name, used as fallback when a template / app does not set `cpu_spoof`
-
-### cpu_presets
-
-`[cpu_presets]` defines named presets whose values are full `/proc/cpuinfo` contents (TOML multiline strings; the middle lines are omitted in the example):
-
-```toml
-[cpu_presets]
-kirin_9030pro = """Processor       : AArch64 Processor rev 0 (aarch64)
-Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32
-...
-Hardware        : HiSilicon Kirin 9030 Pro"""
-```
-
-Reference a preset from a template or `[[apps]]` with `cpu_spoof = "preset-name"` — see [CPU Spoofing](./cpu-spoof.md).
 
 ## Editing the Configuration
 
@@ -102,7 +86,7 @@ name = "popsicle"
 
 - **`[[apps]]` matches the whole record**: once a package matches an `[[apps]]` entry, that record **entirely replaces** the template — fields not set in the record do **not** fall through to the template, only global defaults apply
 - If no `[[apps]]` entry matches, the template `packages` lists are searched
-- Finally, global defaults are applied: `force_denylist_unmount` ← `default_force_denylist_unmount`, CPU preset ← `default_cpu_spoof`
+- Finally, global defaults are applied: `force_denylist_unmount` ← `default_force_denylist_unmount`
 - Apps matching nothing: no spoofing, module unloads
 
 **Template override example**:
@@ -122,5 +106,4 @@ manufacturer = "Samsung"
 ## Next Steps
 
 - [Field Reference](./fields.md) — what each field controls
-- [CPU Spoofing](./cpu-spoof.md) — how to spoof `/proc/cpuinfo`
 - [Advanced Usage](./advanced.md) — property mechanisms, full example, debugging

@@ -109,30 +109,6 @@
   </el-form-item>
 
   <el-collapse>
-    <el-collapse-item :title="t('templates.fields.cpu')" name="cpu">
-      <el-form-item :label="t('templates.fields.cpu_spoof')">
-        <el-select
-          v-model="formData.cpu_spoof"
-          :placeholder="t('templates.placeholders.cpu_spoof')"
-          clearable
-          style="width: 100%"
-        >
-          <el-option v-for="name in availableCpuPresets" :key="name" :label="name" :value="name" />
-        </el-select>
-      </el-form-item>
-
-      <el-form-item :label="t('templates.fields.cpu_spoof_custom')">
-        <el-input
-          v-model="formData.cpu_spoof_custom"
-          type="textarea"
-          :rows="8"
-          :placeholder="t('templates.placeholders.cpu_spoof_custom')"
-        />
-      </el-form-item>
-    </el-collapse-item>
-  </el-collapse>
-
-  <el-collapse>
     <el-collapse-item :title="t('templates.fields.custom_props')" name="customProps">
       <div v-if="formData.customProps.length === 0" class="custom-props-empty">
         {{ t('templates.customProps.empty') }}
@@ -197,22 +173,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { ChevronDown, Plus, Trash2 } from '@lucide/vue'
 import { useI18n } from '../../utils/i18n'
-import { useConfigStore } from '../../stores/config'
 import { useDeviceFakerFormField } from '../../composables/useDeviceFakerForm'
 
 const formData = useDeviceFakerFormField()
 
 const { t } = useI18n()
-const configStore = useConfigStore()
-
-const availableCpuPresets = computed(() => {
-  const presets = configStore.config.cpu_presets
-  if (!presets) return []
-  return Object.keys(presets)
-})
 
 const SPECIAL_PROP_VALUES = ['__EMPTY__', '__DELETE__']
 

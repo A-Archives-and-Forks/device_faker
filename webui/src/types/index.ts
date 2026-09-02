@@ -29,8 +29,6 @@ export interface DeviceInfo {
   custom_props?: CustomProps
   force_denylist_unmount?: boolean
   companion_resetprop?: boolean
-  cpu_spoof?: string
-  cpu_spoof_custom?: string
 }
 
 // 机型模板接口
@@ -111,8 +109,6 @@ export interface OnlineTemplateCacheEntry<T> {
 export interface Config {
   default_force_denylist_unmount?: boolean
   debug?: boolean
-  default_cpu_spoof?: string
-  cpu_presets?: Record<string, string>
   templates?: Record<string, Template>
   apps?: AppConfig[]
 }

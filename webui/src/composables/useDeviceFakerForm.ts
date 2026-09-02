@@ -29,8 +29,6 @@ export interface DeviceFakerFormData {
   force_denylist_unmount: boolean | undefined
   companion_resetprop: boolean | undefined
   packages: string[]
-  cpu_spoof: string
-  cpu_spoof_custom: string
   customProps: CustomPropEntry[]
 }
 
@@ -75,8 +73,6 @@ function createEmptyFormData(): DeviceFakerFormData {
     force_denylist_unmount: undefined,
     companion_resetprop: undefined,
     packages: [],
-    cpu_spoof: '',
-    cpu_spoof_custom: '',
     customProps: [],
   }
 }
@@ -165,18 +161,6 @@ export function formDataToTemplate(formData: DeviceFakerFormData, base?: Templat
     delete template.packages
   }
 
-  if (formData.cpu_spoof) {
-    template.cpu_spoof = formData.cpu_spoof
-  } else {
-    delete template.cpu_spoof
-  }
-
-  if (formData.cpu_spoof_custom) {
-    template.cpu_spoof_custom = formData.cpu_spoof_custom
-  } else {
-    delete template.cpu_spoof_custom
-  }
-
   template.custom_props = entriesToCustomProps(formData.customProps)
 
   return template
@@ -203,8 +187,6 @@ export function templateToFormData(template: Template): DeviceFakerFormData {
     force_denylist_unmount: template.force_denylist_unmount,
     companion_resetprop: template.companion_resetprop,
     packages: template.packages || [],
-    cpu_spoof: template.cpu_spoof || '',
-    cpu_spoof_custom: template.cpu_spoof_custom || '',
     customProps: customPropsToEntries(template.custom_props),
   }
 }
@@ -230,8 +212,6 @@ export function appConfigToFormData(appConfig: AppConfig): DeviceFakerFormData {
     force_denylist_unmount: appConfig.force_denylist_unmount,
     companion_resetprop: appConfig.companion_resetprop,
     packages: [],
-    cpu_spoof: appConfig.cpu_spoof || '',
-    cpu_spoof_custom: appConfig.cpu_spoof_custom || '',
     customProps: customPropsToEntries(appConfig.custom_props),
   }
 }
@@ -263,8 +243,6 @@ export function formDataToAppConfig(formData: DeviceFakerFormData, packageName: 
     characteristics: formData.characteristics,
     force_denylist_unmount: formData.force_denylist_unmount,
     companion_resetprop: formData.companion_resetprop,
-    cpu_spoof: formData.cpu_spoof || undefined,
-    cpu_spoof_custom: formData.cpu_spoof_custom || undefined,
     custom_props: entriesToCustomProps(formData.customProps),
   }
 }

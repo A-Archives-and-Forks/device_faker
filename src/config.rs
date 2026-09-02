@@ -230,12 +230,6 @@ pub struct DeviceTemplate {
     /// 是否为匹配的应用强制执行 FORCE_DENYLIST_UNMOUNT（默认继承全局设置）
     #[serde(default)]
     pub force_denylist_unmount: Option<bool>,
-    /// CPU 伪装预设名称（引用 [cpu_presets]）
-    #[serde(default)]
-    pub cpu_spoof: Option<String>,
-    /// 自定义 CPU 伪装内容（优先级高于 cpu_spoof）
-    #[serde(default)]
-    pub cpu_spoof_custom: Option<String>,
     /// 要从 /proc/self/maps 中清除的属性映射模式列表（默认继承全局设置）
     #[serde(default)]
     pub hide_maps: Option<Vec<String>>,
@@ -291,12 +285,6 @@ pub struct AppConfig {
     /// 是否为该应用强制执行 FORCE_DENYLIST_UNMOUNT（默认继承全局设置）
     #[serde(default)]
     pub force_denylist_unmount: Option<bool>,
-    /// CPU 伪装预设名称（引用 [cpu_presets]）
-    #[serde(default)]
-    pub cpu_spoof: Option<String>,
-    /// 自定义 CPU 伪装内容（优先级高于 cpu_spoof）
-    #[serde(default)]
-    pub cpu_spoof_custom: Option<String>,
     /// 要从 /proc/self/maps 中清除的属性映射模式列表（默认继承全局设置）
     #[serde(default)]
     pub hide_maps: Option<Vec<String>>,
@@ -320,12 +308,6 @@ pub struct Config {
     /// 应用配置
     #[serde(default)]
     pub apps: Vec<AppConfig>,
-    /// 全局默认 CPU 伪装预设名称
-    #[serde(default)]
-    pub default_cpu_spoof: Option<String>,
-    /// CPU 伪装预设表
-    #[serde(default)]
-    pub cpu_presets: HashMap<String, String>,
     /// 要从 /proc/self/maps 中清除的属性映射模式列表（默认不启用）
     #[serde(default)]
     pub default_hide_maps: Vec<String>,
@@ -373,9 +355,6 @@ impl Config {
                 force_denylist_unmount: app
                     .force_denylist_unmount
                     .unwrap_or(self.default_force_denylist_unmount),
-                cpu_spoof: app.cpu_spoof.clone(),
-                cpu_spoof_custom: app.cpu_spoof_custom.clone(),
-                cpuinfo_content: None,
                 hide_maps: app
                     .hide_maps
                     .clone()
@@ -383,7 +362,6 @@ impl Config {
                 companion_resetprop: app.companion_resetprop.unwrap_or(false),
             };
             merged.complete_device_profile();
-            merged.cpuinfo_content = merged.resolve_cpuinfo(self);
             return Some(merged);
         }
 
@@ -410,9 +388,6 @@ impl Config {
                 force_denylist_unmount: template
                     .force_denylist_unmount
                     .unwrap_or(self.default_force_denylist_unmount),
-                cpu_spoof: template.cpu_spoof.clone(),
-                cpu_spoof_custom: template.cpu_spoof_custom.clone(),
-                cpuinfo_content: None,
                 hide_maps: template
                     .hide_maps
                     .clone()
@@ -420,7 +395,6 @@ impl Config {
                 companion_resetprop: template.companion_resetprop.unwrap_or(false),
             };
             merged.complete_device_profile();
-            merged.cpuinfo_content = merged.resolve_cpuinfo(self);
             return Some(merged);
         }
 
@@ -619,12 +593,6 @@ pub struct MergedAppConfig {
     pub dpi: Option<u32>,
     pub custom_props: Option<HashMap<String, String>>,
     pub force_denylist_unmount: bool,
-    /// CPU 伪装预设名称
-    pub cpu_spoof: Option<String>,
-    /// 自定义 CPU 伪装内容
-    pub cpu_spoof_custom: Option<String>,
-    /// 最终要挂载到 /proc/cpuinfo 的内容（已解析完成）
-    pub cpuinfo_content: Option<String>,
     /// 要从 /proc/self/maps 中清除的属性映射模式列表
     pub hide_maps: Vec<String>,
     /// 是否跳过 COW，所有属性走 companion resetprop（默认 false）
@@ -682,21 +650,5 @@ impl MergedAppConfig {
                 .entry("ro.build.tags".to_string())
                 .or_insert(parts.tags);
         }
-    }
-
-    /// 计算最终 CPU 伪装内容
-    pub fn resolve_cpuinfo(&self, config: &Config) -> Option<String> {
-        if let Some(custom) = &self.cpu_spoof_custom
-            && !custom.is_empty()
-        {
-            return Some(custom.clone());
-        }
-
-        let preset_name = self
-            .cpu_spoof
-            .as_ref()
-            .or(config.default_cpu_spoof.as_ref())?;
-
-        config.cpu_presets.get(preset_name).cloned()
     }
 }

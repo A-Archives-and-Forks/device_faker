@@ -119,12 +119,6 @@ function normalizeDeviceInfoFields(source: UnknownRecord): Partial<DeviceInfo> {
     normalized.companion_resetprop = companionResetprop
   }
 
-  const cpuSpoof = asOptionalString(source.cpu_spoof)
-  if (cpuSpoof !== undefined) normalized.cpu_spoof = cpuSpoof
-
-  const cpuSpoofCustom = asOptionalString(source.cpu_spoof_custom)
-  if (cpuSpoofCustom !== undefined) normalized.cpu_spoof_custom = cpuSpoofCustom
-
   return normalized
 }
 
@@ -172,14 +166,6 @@ export function sanitizeConfigForSave(input: Config): Config {
 
   if (input.debug === true) {
     normalized.debug = true
-  }
-
-  if (input.default_cpu_spoof) {
-    normalized.default_cpu_spoof = input.default_cpu_spoof
-  }
-
-  if (input.cpu_presets && Object.keys(input.cpu_presets).length > 0) {
-    normalized.cpu_presets = input.cpu_presets
   }
 
   if (input.templates) {

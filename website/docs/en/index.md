@@ -32,8 +32,6 @@ features:
     details: The config is re-read on every app launch. After changes, just restart the target app — no system reboot needed.
   - title: 🛡️ Safe and reliable
     details: Based on the Zygisk framework, with a modular design.
-  - title: 🧬 CPU spoofing
-    details: Per-app /proc/cpuinfo spoofing with named presets or custom content, automatically cleaned up when the app exits.
   - title: 🖥️ Modern WebUI
     details: Graphical app and template management with an online template library, multi-user app display, swipe-back navigation and multiple UI languages.
 ---

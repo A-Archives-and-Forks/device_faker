@@ -75,7 +75,6 @@ function sidebarGuide() {
       items: [
         { text: 'Basics', link: '/en/guide/configuration/' },
         { text: 'Field Reference', link: '/en/guide/configuration/fields' },
-        { text: 'CPU Spoofing', link: '/en/guide/configuration/cpu-spoof' },
         { text: 'Advanced Usage', link: '/en/guide/configuration/advanced' }
       ]
     },

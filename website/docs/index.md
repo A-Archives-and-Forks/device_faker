@@ -13,7 +13,7 @@ head:
 hero:
   name: Device Faker
   text: 为每个应用伪装不同的机型
-  tagline: 按应用定制机型 · 属性伪装 · CPU 伪装 · 改完即生效
+  tagline: 按应用定制机型 · 属性伪装 · 改完即生效
   image:
     src: /logo.webp
     alt: Device Faker
@@ -43,8 +43,6 @@ features:
     details: 每次应用启动时重新读取配置；修改后只需重启目标应用，无需重启系统。
   - title: 🛡️ 安全可靠
     details: 基于 Zygisk 框架，模块化设计。
-  - title: 🧬 CPU 伪装
-    details: 按应用伪造 /proc/cpuinfo，支持命名预设与自定义内容。
   - title: 🖥️ 现代化 WebUI
     details: 图形化管理应用与模板，支持在线模板库、多用户应用显示和界面多语言。
 ---

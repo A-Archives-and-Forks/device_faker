@@ -37,7 +37,7 @@ Tap an app to enter the config editor:
 
 - Fill in fields directly (manufacturer, brand, model, device codename, etc.)
 - Apply an existing [device template](./configuration/index.md#method-one-device-templates) in one click
-- Set toggles such as `companion_resetprop`, `force_denylist_unmount`, `dpi`, `cpu_spoof`
+- Set toggles such as `companion_resetprop`, `force_denylist_unmount`, `dpi`
 - Add custom properties in the `custom_props` section
 
 ### Applying a Template to an App

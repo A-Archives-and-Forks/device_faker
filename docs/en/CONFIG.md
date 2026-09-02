@@ -16,26 +16,10 @@ The config is **hot-reloaded**: the module re-reads the file on every app launch
 ```toml
 debug = false                        # debug logging (off by default)
 default_force_denylist_unmount = false
-default_cpu_spoof = "kirin_9030pro"  # fallback preset when a template / app does not set cpu_spoof
 ```
 
 - `debug`: when enabled, Info-level logs are output (Error-only when disabled), written to `/data/adb/device_faker/logs/device_faker.log`; keep it disabled during normal use for better stealth
 - `default_force_denylist_unmount`: enables Zygisk's `FORCE_DENYLIST_UNMOUNT` for the target apps; can be overridden per template / per app with `force_denylist_unmount`
-- `default_cpu_spoof`: CPU spoofing preset name, used as fallback when a template / app does not set `cpu_spoof`
-
-### cpu_presets
-
-`[cpu_presets]` defines named presets whose values are full `/proc/cpuinfo` contents (TOML multiline strings; the middle lines are omitted in the example):
-
-```toml
-[cpu_presets]
-kirin_9030pro = """Processor       : AArch64 Processor rev 0 (aarch64)
-Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32
-...
-Hardware        : HiSilicon Kirin 9030 Pro"""
-```
-
-Reference a preset from a template or `[[apps]]` with `cpu_spoof = "preset-name"` — see [CPU Spoofing](#cpu-spoofing).
 
 ## Editing the Configuration
 
@@ -97,7 +81,7 @@ name = "popsicle"
 
 - **`[[apps]]` matches the whole record**: once a package matches an `[[apps]]` entry, that record **entirely replaces** the template — fields not set in the record do **not** fall through to the template, only global defaults apply
 - If no `[[apps]]` entry matches, the template `packages` lists are searched
-- Finally, global defaults are applied: `force_denylist_unmount` ← `default_force_denylist_unmount`, CPU preset ← `default_cpu_spoof`
+- Finally, global defaults are applied: `force_denylist_unmount` ← `default_force_denylist_unmount`
 - Apps matching nothing: no spoofing, module unloads
 
 **Template override example**:
@@ -181,8 +165,6 @@ manufacturer = "Custom"
 | `companion_resetprop` | `false` | When `true`, skips COW and sends all properties through the companion `resetprop` (writes the property area directly, bypassing property_service) for system-wide consistent reads; when `false` (default), COW takes priority — it only affects the current process's memory. See [Property Spoofing Mechanism](#property-spoofing-mechanism) |
 | `dpi` | — | Temporarily sets system display density via `wm density`; range `120`–`640`; the companion saves and restores the original override |
 | `force_denylist_unmount` | inherits `default_force_denylist_unmount` | Force-enable Zygisk `FORCE_DENYLIST_UNMOUNT` for this app; priority: app > template > global default |
-| `cpu_spoof` | — | CPU spoofing preset name referencing `[cpu_presets]`; see [CPU Spoofing](#cpu-spoofing) |
-| `cpu_spoof_custom` | — | Raw `/proc/cpuinfo` content; takes priority over `cpu_spoof` |
 
 **Notes**:
 - All fields except `package` are optional
@@ -190,21 +172,12 @@ manufacturer = "Custom"
 - An `[[apps]]` record replaces the template entirely; unset fields do not fall through (see [Priority](#priority))
 - Fields not listed in the tables above are silently ignored (they do not affect parsing)
 
-## CPU Spoofing
-
-The companion process bind-mounts fake `/proc/cpuinfo` content into the target app's mount namespace:
-
-- KernelSU performs `setns` 25–100ms after mounting; the module detects it via a timerfd and re-mounts automatically
-- Automatically unmounted when the app exits; other apps are unaffected
-- Apps without `cpu_spoof` configured proactively clean up `/proc/cpuinfo` mounts that may have leaked into their namespace (overhead is only ~13μs when no spoofing is active)
-- Content source priority: `cpu_spoof_custom` > `cpu_spoof` preset name > global `default_cpu_spoof` > lookup in `[cpu_presets]`; if the preset doesn't exist, no CPU spoofing is done
-
 ## Property Spoofing Mechanism
 
 All apps go through the same unified flow (no mode selection needed):
 
 ```
-① JNI overwrite of Build static fields → ② COW or companion resetprop → ③ DPI spoofing → ④ CPU spoofing → ⑤ DlClose unload
+① JNI overwrite of Build static fields → ② COW or companion resetprop → ③ DPI spoofing → ④ DlClose unload
 ```
 
 - **COW (default)**: remaps the property-area file with mmap COW and overwrites property memory in place, covering native reads via `__system_property_get` / `__system_property_read_callback`; no GOT/PLT modification; **only affects the current process's** memory mapping; the module calls DlClose right after writing, leaving zero resident footprint
@@ -216,14 +189,6 @@ All apps go through the same unified flow (no mode selection needed):
 # ── Global settings ───────────────────────────────────────
 debug = false                        # debug logging (off by default)
 default_force_denylist_unmount = false
-default_cpu_spoof = "kirin_9030pro"  # global default CPU preset
-
-# ── CPU spoofing presets ──────────────────────────────────
-[cpu_presets]
-kirin_9030pro = """Processor       : AArch64 Processor rev 0 (aarch64)
-Features        : fp asimd evtstrm aes pmull sha1 sha2 crc32
-...
-Hardware        : HiSilicon Kirin 9030 Pro"""
 
 # ── Device templates ──────────────────────────────────────
 [templates.redmagic_9_pro]
@@ -240,7 +205,6 @@ device = "REDMAGIC 11 PRO"
 product = "NX809J"
 fingerprint = "REDMAGIC/NX809J-UN/NX809J:16/BP2A.250605.031.A3/20251017.000000:user/release-keys"
 build_id = "BP2A.250605.031.A3"
-cpu_spoof = "kirin_9030pro"  # CPU spoofing for all packages in this template
 
 # ── Direct configuration ──────────────────────────────────
 [[apps]]

@@ -69,8 +69,6 @@ manufacturer = "Custom"
 | `companion_resetprop` | `false` | `true` 时跳过 COW，所有属性交给 companion 进程 `resetprop` 写入（直写属性区，不经过 property_service），全系统读取一致；`false`（默认）时 COW 优先，仅影响当前进程内存。详见 [高级用法](./advanced.md#属性伪造机制) |
 | `dpi` | — | 临时设置系统显示 density（`wm density`），范围 `120`–`640`；由 companion 保存并恢复原始 override |
 | `force_denylist_unmount` | 继承 `default_force_denylist_unmount` | 对该应用强制启用 Zygisk `FORCE_DENYLIST_UNMOUNT`；优先级：应用 > 模板 > 全局默认 |
-| `cpu_spoof` | — | CPU 伪装预设名，引用 `[cpu_presets]`，详见 [CPU 伪装](./cpu-spoof.md) |
-| `cpu_spoof_custom` | — | 直接指定 `/proc/cpuinfo` 内容，优先级高于 `cpu_spoof` |
 
 **注意**：
 

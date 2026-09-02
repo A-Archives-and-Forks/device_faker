@@ -20,7 +20,6 @@ Zygisk tabanlı, farklı uygulamalar için farklı cihaz modellerini yapılandı
 * 📝 **Basit Yapılandırma**: Düzenlemesi kolay TOML formatındaki yapılandırma dosyalarını kullanır.
 * 🎭 **Birleşik Yürütme Akışı**: Mod seçimi gerektirmez; JNI alan sahteleştirmesi, COW özellik sahteleştirmesi ve companion hizmetleri otomatik olarak yönetilir.
 * 🔒 **COW Özellik Motoru**: Sistem özelliklerini mmap copy-on-write ile sahteleştirir; süreç başına izolasyon ve sıfır kalıcılık.
-* 🧬 **CPU Taklidi**: Uygulama başına /proc/cpuinfo taklidi.
 * 🌐 **WebUI Yönetimi**: Yapılandırmaları kolayca yönetebilmeniz için grafiksel bir web arayüzü sunar.
 
 

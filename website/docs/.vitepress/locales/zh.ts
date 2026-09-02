@@ -96,7 +96,6 @@ function sidebarGuide() {
       items: [
         { text: '基础配置', link: '/guide/configuration/' },
         { text: '字段参考', link: '/guide/configuration/fields' },
-        { text: 'CPU 伪装', link: '/guide/configuration/cpu-spoof' },
         { text: '高级用法', link: '/guide/configuration/advanced' }
       ]
     },

@@ -37,7 +37,7 @@ WebUI 采用纯 KernelSU WebUI API 实现，支持 KernelSU、WeaveMask 和 APat
 
 - 直接填写各字段（制造商、品牌、型号、设备代号等）
 - 选择已存在的[机型模板](./configuration/index.md#方式一机型模板)快速套用
-- 设置 `companion_resetprop`、`force_denylist_unmount`、`dpi`、`cpu_spoof` 等开关
+- 设置 `companion_resetprop`、`force_denylist_unmount`、`dpi` 等开关
 - 在 `custom_props` 区域添加自定义属性
 
 ### 给应用套用模板

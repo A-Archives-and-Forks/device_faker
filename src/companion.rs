@@ -184,23 +184,6 @@ fn deactivate_session(sess: &mut Session, focused: &str) {
 // ── 协议与机械层（保持不变）──────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct CpuSpoofRequest {
-    pub pid: u32,
-    pub content: String,
-    /// 本次请求对应的全局 debug 开关，companion 依此调整日志级别。
-    #[serde(default)]
-    pub debug: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CpuSpoofUnmountRequest {
-    pub pid: u32,
-    /// 本次请求对应的全局 debug 开关，companion 依此调整日志级别。
-    #[serde(default)]
-    pub debug: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct WriteLogRequest {
     pub lines: Vec<String>,
 }
@@ -306,12 +289,6 @@ pub fn handle_companion_request(stream: &mut UnixStream) {
             if let Err(e) = write_companion_response(stream, &response) {
                 warn!("Failed to write companion response: {e}");
             }
-        }
-        CompanionRequest::CpuSpoof(request) => {
-            crate::cpu_spoof::handle_companion_cpu_spoof(stream, request);
-        }
-        CompanionRequest::CpuSpoofUnmount(request) => {
-            crate::cpu_spoof::handle_companion_cpu_unmount(stream, request);
         }
         CompanionRequest::WriteLog(request) => {
             let response = match write_log_lines(request) {
@@ -742,8 +719,6 @@ pub(crate) struct RestoreRequest {
 pub enum CompanionRequest {
     Apply(ResetpropSessionRequest),
     Restore(RestoreRequest),
-    CpuSpoof(CpuSpoofRequest),
-    CpuSpoofUnmount(CpuSpoofUnmountRequest),
     WriteLog(WriteLogRequest),
 }
 
