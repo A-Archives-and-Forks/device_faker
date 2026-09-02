@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use log::{error, info, warn};
+use log::{LevelFilter, error, info, warn};
 use prop_rs_android::{resetprop::ResetProp, sys_prop};
 use serde::{Deserialize, Serialize};
 use zygisk_api::api::{V4, ZygiskApi};
@@ -187,11 +187,17 @@ fn deactivate_session(sess: &mut Session, focused: &str) {
 pub struct CpuSpoofRequest {
     pub pid: u32,
     pub content: String,
+    /// 本次请求对应的全局 debug 开关，companion 依此调整日志级别。
+    #[serde(default)]
+    pub debug: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CpuSpoofUnmountRequest {
     pub pid: u32,
+    /// 本次请求对应的全局 debug 开关，companion 依此调整日志级别。
+    #[serde(default)]
+    pub debug: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -205,6 +211,7 @@ pub fn spoof_system_props_via_companion(
     delete_props: &[String],
     package_name: &str,
     density: Option<u32>,
+    debug: bool,
 ) -> anyhow::Result<()> {
     if prop_map.is_empty() && delete_props.is_empty() && density.is_none() {
         return Ok(());
@@ -216,6 +223,7 @@ pub fn spoof_system_props_via_companion(
         delete_props: delete_props.to_vec(),
         package_name: package_name.to_string(),
         density,
+        debug,
     });
 
     let response = send_companion_command(api, &request)?;
@@ -362,11 +370,24 @@ fn rebuild_all_contexts(keys_iter: impl Iterator<Item = impl AsRef<str>>) {
     }
 }
 
+/// 同步 companion 日志级别：debug=true 保持 Debug（保留 fg_observer/会话等观察性日志），
+/// debug=false → Off（完全不写日志）。fork 出来的 CPU spoof 子进程会继承该级别，
+/// 因此调用点必须在 fork 之前。
+pub(crate) fn sync_log_level(debug: bool) {
+    crate::file_logger::set_level(if debug {
+        LevelFilter::Debug
+    } else {
+        LevelFilter::Off
+    });
+}
+
 /// Apply 请求处理器：只采样备份 + 登记未激活会话（D1），
 /// 不急切应用任何全局态；激活由 FG 事件驱动。
 fn apply_resetprop_session(
     request: ResetpropSessionRequest,
 ) -> anyhow::Result<HashMap<String, String>> {
+    sync_log_level(request.debug);
+
     if request.props.is_empty() && request.delete_props.is_empty() && request.density.is_none() {
         return Ok(HashMap::new());
     }
@@ -706,6 +727,9 @@ pub(crate) struct ResetpropSessionRequest {
     package_name: String,
     #[serde(default)]
     density: Option<u32>,
+    /// 全局 debug 开关：debug=false 时 companion 完全不打印日志。
+    #[serde(default)]
+    debug: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

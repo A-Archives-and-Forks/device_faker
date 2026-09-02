@@ -183,6 +183,7 @@ impl MyModule {
                     &delete_props,
                     &package_name,
                     merged.dpi,
+                    config.debug,
                 ) {
                     error!("Companion resetprop (full) failed: {e:?}");
                 } else if config.debug {
@@ -226,9 +227,14 @@ impl MyModule {
             // 配置了仍走 companion。
             if merged.dpi.is_some() {
                 let empty: HashMap<String, String> = HashMap::new();
-                if let Err(e) =
-                    spoof_system_props_via_companion(api, &empty, &[], &package_name, merged.dpi)
-                {
+                if let Err(e) = spoof_system_props_via_companion(
+                    api,
+                    &empty,
+                    &[],
+                    &package_name,
+                    merged.dpi,
+                    config.debug,
+                ) {
                     error!("Companion dpi failed: {e:?}");
                 } else if config.debug {
                     info!("Companion dpi applied for {package_name}");
@@ -313,7 +319,8 @@ fn configure_log_level(debug_enabled: bool) {
     let level = if debug_enabled {
         LevelFilter::Info
     } else {
-        LevelFilter::Error
+        // 非 debug 不打印任何日志（Error 也不落盘）。
+        LevelFilter::Off
     };
     log::set_max_level(level);
 }

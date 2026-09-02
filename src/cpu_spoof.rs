@@ -95,6 +95,7 @@ pub fn apply_cpu_spoof(
     let request = CompanionRequest::CpuSpoof(crate::companion::CpuSpoofRequest {
         pid: std::process::id(),
         content: content.clone(),
+        debug,
     });
 
     let response = send_companion_command_leak_fd(api, &request)?;
@@ -152,6 +153,7 @@ pub fn apply_cpu_spoof_unmount(api: &mut ZygiskApi<V4>, debug: bool) -> anyhow::
 
     let request = CompanionRequest::CpuSpoofUnmount(crate::companion::CpuSpoofUnmountRequest {
         pid: std::process::id(),
+        debug,
     });
 
     let response = send_companion_command(api, &request)?;
@@ -308,6 +310,10 @@ pub fn handle_companion_cpu_spoof(
     #[cfg(target_os = "android")]
     crate::file_logger::init();
 
+    // 按请求携带的 debug 开关同步日志级别（必须在 fork mount child 之前，
+    // 子进程会继承该级别）。
+    crate::companion::sync_log_level(request.debug);
+
     let pid = request.pid;
     info!(
         "Companion cpu_spoof handler entered, pid={pid}, self_pid={}",
@@ -404,6 +410,8 @@ pub fn handle_companion_cpu_unmount(
 ) {
     #[cfg(target_os = "android")]
     crate::file_logger::init();
+
+    crate::companion::sync_log_level(request.debug);
 
     let pid = request.pid;
     info!("Companion cpu_unmount handler entered, pid={pid}");
