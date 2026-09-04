@@ -66,7 +66,9 @@ pub type FgSink = Arc<dyn Fn(&str) + Send + Sync>;
 /// UidObserver 回调状态。
 pub struct UidObserverState {
     /// uid → 包名（全量，来自 packages.list）。
-    uid_to_pkg: HashMap<i32, String>,
+    /// 注册时快照可能过期（新装/更新 app 不在快照内）：
+    /// 查询 miss 时重读 packages.list 定向刷新，保证"即装即测"不被前台门控漏判。
+    uid_to_pkg: Mutex<HashMap<i32, String>>,
     /// 当前处于 TOP 的 uid（全局同时至多一个）。
     top_uid: Mutex<Option<i32>>,
     sink: FgSink,
@@ -82,11 +84,19 @@ impl UidObserverState {
                 return; // 幂等
             }
             *top = Some(uid);
-            let pkg = self
-                .uid_to_pkg
-                .get(&uid)
-                .cloned()
-                .unwrap_or_else(|| "-".to_string());
+            // 查 uid → 包名；miss 表示新装/更新包不在注册快照内，重读 packages.list 刷新。
+            let pkg = {
+                let mut map = self.uid_to_pkg.lock().unwrap();
+                match map.get(&uid) {
+                    Some(p) => p.clone(),
+                    None => {
+                        if let Ok(fresh) = read_packages_list() {
+                            *map = fresh;
+                        }
+                        map.get(&uid).cloned().unwrap_or_else(|| "-".to_string())
+                    }
+                }
+            };
             info!("fg observer: uid {uid} entered TOP -> {pkg}");
             drop(top);
             *CURRENT_FG.lock().unwrap() = Some(pkg.clone());
@@ -172,7 +182,7 @@ fn register_observer(sink: FgSink) -> anyhow::Result<()> {
     let bp: Strong<dyn IActivityManager> = svc.into_interface()?;
 
     let state = UidObserverState {
-        uid_to_pkg,
+        uid_to_pkg: Mutex::new(uid_to_pkg),
         top_uid: Mutex::new(None),
         sink,
     };

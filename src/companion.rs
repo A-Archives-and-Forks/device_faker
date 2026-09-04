@@ -87,7 +87,7 @@ fn warn_fg_unavailable() {
         .unwrap_or(false);
     if due {
         warn!(
-            "foreground source not ready; property/density gating degraded (nothing will be applied)"
+            "foreground source not ready; session registration pending activation (will apply once FG events arrive)"
         );
     }
 }
@@ -383,14 +383,18 @@ fn apply_resetprop_session(
     // 首次 Apply 时惰性启动前台源（UidObserver 事件驱动；失败退 0.5s 轮询）。
     spawn_fg_observer_once();
 
-    // D2 宁缺毋滥：前台源未就绪时不做任何全局变更，响应成功（空备份）。
+    // D2 语义：前台源未就绪时不急切应用任何全局态；但**照常采样登记 session**。
+    // 之前这里直接 return（连 session 都不登记），observer 注册完成后到达的首次
+    // TOP 事件会因 `SESSION == None` 无法激活 → 本次启动属性永不应用（首启竞态，
+    // 冷启动后首个 companion app 必命中，极易误报"某版本属性失效"）。
+    // 修复：不 return 不等待——session 登记后，registerUidObserver 完成时 AMS 会
+    // 回放当前 uid 状态（或 0.5s dumpsys 轮询兜底）产生 FG 事件驱动激活。
     if !fg_ready() {
         warn_fg_unavailable();
         info!(
-            "Apply for '{}' skipped (fg source not ready): no global changes applied",
+            "Apply for '{}' session will be registered; awaiting fg source ready to activate",
             request.package_name
         );
-        return Ok(HashMap::new());
     }
 
     // 收割 CPU spoof 等 fork 子进程的僵尸（轻量兜底）。
