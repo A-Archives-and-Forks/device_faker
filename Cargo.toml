@@ -20,15 +20,12 @@ libc = "0.2"
 prop-rs-android = { git = "https://github.com/Kernel-SU/ksu_props.git", version = "0.2.0" }
 memmap2 = "0.9.11"
 # 前台 UidObserver：root binder 注册 ActivityManager.registerUidObserver，
-# 事件驱动接收 PROCESS_STATE_TOP 变化（android_11_plus = binderfs 路径）。
-# 注：rsbinder 0.5.3 关 async 无法编译（内部 servicemanager 无条件引用
-# BoxFuture），必须保留默认 tokio→async；生成代码的 async trait 用
-# #[::async_trait::async_trait]，需本 crate 直依赖 async-trait。
-rsbinder = { version = "0.5", features = ["android_11_plus"] }
+# 事件驱动接收 PROCESS_STATE_TOP 变化。
+rsbinder = { version = "0.10", features = ["android_10_plus"] }
 async-trait = "0.1"
 
 [build-dependencies]
-rsbinder-aidl = "0.5"
+rsbinder-aidl = "0.10"
 
 [lib]
 name = "zygisk"

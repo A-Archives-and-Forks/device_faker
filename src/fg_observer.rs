@@ -168,18 +168,16 @@ pub fn spawn_fg_source(sink: FgSink) {
 
 /// 注册 UidObserver 并启动 binder 线程池接收回调。返回 Ok 表示已接管前台源。
 fn register_observer(sink: FgSink) -> anyhow::Result<()> {
-    ProcessState::init_default();
+    ProcessState::init_default()
+        .map_err(|e| anyhow::anyhow!("binder ProcessState init failed: {e}"))?;
 
     let uid_to_pkg = read_packages_list()?;
     if uid_to_pkg.is_empty() {
         return Err(anyhow::anyhow!("{PACKAGES_LIST} empty/unreadable"));
     }
 
-    let svc = hub::get_service("activity").ok_or_else(|| {
-        anyhow::anyhow!("binder service 'activity' (ActivityManager) unavailable")
-    })?;
-    // rsbinder 的 SIBinder → Strong<dyn IActivityManager>（BpActivityManager 代理）。
-    let bp: Strong<dyn IActivityManager> = svc.into_interface()?;
+    // 阻塞等 ActivityManager 服务可用，返回强类型代理（BpActivityManager）。
+    let bp: Strong<dyn IActivityManager> = hub::wait_for_interface("activity")?;
 
     let state = UidObserverState {
         uid_to_pkg: Mutex::new(uid_to_pkg),
