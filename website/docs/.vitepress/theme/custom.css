@@ -13,8 +13,25 @@
 }
 
 .VPHero .image img.VPImage {
-  width: 224px !important;
+  width: 256px !important;
   height: auto !important;
   max-width: none !important;
   max-height: none !important;
+}
+
+@media (min-width: 640px) {
+  .VPHero .image img.VPImage {
+    width: 320px !important;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHero .image img.VPImage {
+    width: 384px !important;
+  }
+
+  .VPHero .image-bg {
+    width: 384px !important;
+    height: 384px !important;
+  }
 }

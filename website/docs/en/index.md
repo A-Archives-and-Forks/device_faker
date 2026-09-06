@@ -5,9 +5,9 @@ title: Device Faker
 hero:
   name: Device Faker
   text: Spoof a different device model per app
-  tagline: Per-app device profiles · property spoofing · CPU spoofing · instant reload
+  tagline: Per-app device profiles · property spoofing · instant reload
   image:
-    src: /logo.png
+    src: /logo.svg
     alt: Device Faker
   actions:
     - theme: brand
